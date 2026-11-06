@@ -1,0 +1,31 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recipe is built from src/sprites
+        run: node scripts/build.mjs --check
+
+      - name: Install the latest Orca
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo stablyai/orca --pattern 'orca-ide_*_amd64.deb' --output "$RUNNER_TEMP/orca.deb"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "$RUNNER_TEMP/orca.deb"
+          orca-ide --version
+
+      - name: Plugin manifest is valid
+        run: orca-ide plugin validate .
