@@ -1,16 +1,19 @@
-# Worked example — Sprites
+# Sprites recipe: design notes
 
-Load this when writing the `create` or lifecycle scripts for [Sprites](https://sprites.dev),
-the persistent Linux VMs from Fly.io. It fills section 7's skeletons with a real surface:
-`sprite create|exec|config|destroy` on the desktop and `sprite-env services` inside the Sprite.
-Verify each flag against `sprite <command> --help` for the user's CLI version.
+How the Sprites recipe for [Orca](https://github.com/stablyai/orca) works and why. It follows
+Orca's per-workspace environment guide
+([`orca-per-workspace-env.md`](https://github.com/stablyai/orca/blob/main/skill-guides/orca-per-workspace-env.md))
+and its Vercel Sandbox example
+([`provider-vercel.md`](https://github.com/stablyai/orca/blob/main/skill-guides/orca-per-workspace-env/references/provider-vercel.md)),
+using `sprite create|exec|config|destroy` on the desktop and `sprite-env services` inside the
+Sprite.
 
 This is the Orca-server connection mode. Sprites have no SSH target that can be dialed, so SSH
 mode does not apply.
 
 ## How Sprites differ from a snapshot provider
 
-| Guide step | Sprites |
+| Orca guide step | Sprites |
 |---|---|
 | Base snapshot, boot each workspace from it | Not used. A checkpoint belongs to one Sprite, and there is no create-from-checkpoint. `create` builds each Sprite: it installs the Orca `.deb` and clones the repo. Each workspace has its own Sprite, so no two workspaces share a pairing identity. |
 | Agent-auth snapshot | Not needed. `create` takes the agent credential from the desktop environment (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`) and writes it to a `0600` file on the Sprite. Secrets travel as an uploaded file (`sprite exec --file`), never as command-line arguments, and are never in state or `userData`. |
@@ -50,7 +53,7 @@ Orca's desktop and CLI client opens the WebSocket with only `maxPayload` and
 address as `wss://x:<token>@host` would likely pass the edge as Basic auth, but the pairing
 code would then carry an org-wide token: whoever holds the code could manage every Sprite in
 the org. Browser-based Orca clients may not send URL credentials at all. A public URL keeps
-the pairing code scoped to one Orca server, which matches Orca's Vercel example. A token
+the pairing code scoped to one Orca server, which matches Orca's Vercel Sandbox example. A token
 scoped to one Sprite's URL would change this trade-off.
 
 ## Packaging: an Orca plugin
@@ -62,9 +65,10 @@ commands; there is no plugin worker and no host-API capability.
 
 A plugin recipe must be self-contained (each command is a string of at most 32 KiB), so
 `scripts/build.mjs` inlines `src/sprites/lib.sh` into each phase and wraps it as
-`bash -c "$(cat <<'ORCA_SPRITES_SCRIPT' … ORCA_SPRITES_SCRIPT)"`. Orca runs every phase with
-`sh -c` (dash on Debian and Ubuntu) in the repository's root; the quoted heredoc carries the
-bash script, and stdin stays free for the lifecycle payload.
+`bash -c '<script>' sprites-<phase>`, with each `'` written as `'\''`. Orca runs every phase
+with `sh -c` in the repository's root: dash on Debian and Ubuntu, bash 3.2 on macOS. The
+script travels as one argument, so stdin stays free for the lifecycle payload. A heredoc
+inside `$(...)` is not used: bash 3.2 misparses an apostrophe in one.
 
 | Source | Does |
 |---|---|
@@ -74,10 +78,11 @@ bash script, and stdin stays free for the lifecycle payload.
 | `src/sprites/resume.sh` | Starts the `orca` service, prints the saved recipe JSON |
 | `src/sprites/destroy.sh` | Destroys the Sprite. It succeeds if the Sprite is already gone. |
 
-There is no state file. `create` takes its settings from what Orca and the desktop already
-know: Orca's `ORCA_REPO_REF` (the base branch) and `ORCA_VERSION`, the repository's `origin`
-remote (Orca sets `ORCA_REPO_URL` only for `provisioned-root` recipes), and the `sprite`
-CLI's default organization. `SPRITES_*` variables override each one; see the README. The
+There is no state file. `create` takes its settings from what the desktop already knows: the
+repository's `origin` remote and its default branch (local `origin/HEAD`, else
+`git ls-remote --symref`), the desktop Orca CLI's version, and the `sprite` CLI's default
+organization. Orca sets `ORCA_REPO_URL`, `ORCA_REPO_REF` and `ORCA_VERSION` only for
+`provisioned-root` recipes, or not at all, so the recipe does not rely on them. `SPRITES_*` variables override each one; see the README. The
 lifecycle phases take the Sprite name and organization from `userData` in the payload.
 
 Prerequisites on the desktop: the `sprite` CLI logged in to the org (`sprite login`, or
@@ -88,7 +93,7 @@ or set the variables with `launchctl setenv`.
 
 The git token is used only to clone and is deleted afterwards, so `git fetch` and `git push`
 from inside the workspace need their own credentials (for example `gh auth login` in the
-workspace terminal). Orca's Vercel example has the same gap.
+workspace terminal). Orca's Vercel Sandbox example has the same gap.
 
 ## `create`
 

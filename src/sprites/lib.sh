@@ -5,13 +5,14 @@
 # Every phase keeps stdout for its one JSON result. Everything else goes to stderr.
 #
 # Orca runs each phase in the repository's root directory and sets ORCA_* variables
-# (ORCA_VM_INSTANCE_ID, ORCA_REPO_REF, ORCA_REPO_PATH, ORCA_VERSION, ...). Optional
+# (ORCA_VM_INSTANCE_ID, ORCA_RECIPE_ID, ORCA_REPO_PATH, ...). For a recipe like this one it
+# leaves ORCA_REPO_URL, ORCA_REPO_REF and ORCA_VERSION empty. Optional
 # overrides, read from the environment Orca was started from:
 #   SPRITES_ORG            Sprites organization (default: the sprite CLI's default org)
 #   SPRITES_REPO_URL       repository to clone (default: the repo's origin remote)
-#   SPRITES_REPO_REF       branch or tag to check out (default: Orca's base ref, then origin's default branch)
+#   SPRITES_REPO_REF       branch or tag to check out (default: origin's default branch)
 #   SPRITES_PROJECT_ROOT   checkout path on the Sprite (default: /home/sprite/<repo name>)
-#   SPRITES_ORCA_VERSION   orca-ide version to install (default: the running Orca's version)
+#   SPRITES_ORCA_VERSION   orca-ide version to install (default: the desktop Orca CLI's version)
 #   SPRITES_NAME_PREFIX    Sprite name prefix (default: orca)
 
 log() { printf '[sprites] %s\n' "$*" >&2; }
@@ -23,7 +24,19 @@ command -v node >/dev/null 2>&1 || die "node is not on PATH; the recipe uses it 
 org="${SPRITES_ORG:-}"
 repo_url="" repo_ref="" project_root=""
 name_prefix="${SPRITES_NAME_PREFIX:-orca}"
-orca_version="${SPRITES_ORCA_VERSION:-${ORCA_VERSION:-1.4.246}}"
+# Orca does not pass its version to recipes, so ask the desktop's Orca CLI, then fall back
+# to the version this recipe was tested with.
+detect_orca_version() {
+  local v="" cli
+  for cli in orca-ide orca; do
+    command -v "$cli" >/dev/null 2>&1 || continue
+    v="$("$cli" --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
+    [ -z "$v" ] || break
+  done
+  printf '%s' "${v:-1.4.246}"
+}
+orca_version="${SPRITES_ORCA_VERSION:-${ORCA_VERSION:-}}"
+[ -n "$orca_version" ] || orca_version="$(detect_orca_version)"
 orca_version="${orca_version#v}"
 # The Sprite URL routes to port 8080.
 port=8080
@@ -72,10 +85,18 @@ resolve_repo() {
   esac
   ref="${SPRITES_REPO_REF:-${ORCA_REPO_REF:-}}"
   ref="${ref#refs/heads/}"; ref="${ref#refs/remotes/origin/}"; ref="${ref#origin/}"
+  # Orca sets ORCA_REPO_REF only for provisioned-root recipes, so this usually falls through
+  # to origin's default branch: the local origin/HEAD, then asking the remote.
   if [ -z "$ref" ]; then
     ref="$(git -C "$repo_dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
     ref="${ref#origin/}"
   fi
+  # Ask the HTTPS URL the Sprite will clone first: it works without SSH keys.
+  local remote
+  for remote in "$repo_url" origin; do
+    [ -z "$ref" ] || break
+    ref="$(GIT_TERMINAL_PROMPT=0 git -C "$repo_dir" ls-remote --symref "$remote" HEAD 2>/dev/null | sed -n 's#^ref: refs/heads/\([^[:space:]]*\)[[:space:]]*HEAD$#\1#p' | head -n 1 || true)"
+  done
   repo_ref="${ref:-main}"
   local base="${repo_url%/}"; base="${base##*/}"; base="${base%.git}"
   project_root="${SPRITES_PROJECT_ROOT:-/home/sprite/${base:-project}}"
@@ -121,19 +142,23 @@ destroy_sprite() {
   return 1
 }
 
-# with_secrets <sprite> <env K=V,...> <cmd...>: run a command with the secrets uploaded as a file, so
-# no token is on a command line on the desktop or the Sprite. The remote fragment sources
-# $SECRETS_FILE and deletes it. Secrets: GH_TOKEN (git), CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY.
+# with_secrets <sprite> <git|agent> <env K=V,...> <cmd...>: run a command with secrets
+# uploaded as a file, so no token is on a command line on the desktop or the Sprite. The
+# remote fragment sources $SECRETS_FILE and deletes it. `git` sends GH_TOKEN for the clone;
+# `agent` sends CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY for the agent. Each step gets
+# only what it needs.
 with_secrets() {
-  local name="$1" envs="$2"; shift 2
-  local local_file remote_file token rc=0
+  local name="$1" which="$2" envs="$3"; shift 3
+  local local_file remote_file token="" rc=0
   local_file="$(umask 077; mktemp "${TMPDIR:-/tmp}/orca-sprites.XXXXXX")"
   remote_file="/tmp/orca-secrets-$(date +%s)-$RANDOM$RANDOM.env"
-  token="$(git_token)"
+  [ "$which" != git ] || token="$(git_token)"
   {
     [ -z "$token" ] || printf 'export GH_TOKEN=%q\n' "$token"
-    [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$CLAUDE_CODE_OAUTH_TOKEN"
-    [ -z "${ANTHROPIC_API_KEY:-}" ] || printf 'export ANTHROPIC_API_KEY=%q\n' "$ANTHROPIC_API_KEY"
+    if [ "$which" = agent ]; then
+      [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$CLAUDE_CODE_OAUTH_TOKEN"
+      [ -z "${ANTHROPIC_API_KEY:-}" ] || printf 'export ANTHROPIC_API_KEY=%q\n' "$ANTHROPIC_API_KEY"
+    fi
   } > "$local_file"
   rexec "$name" --file "$local_file:$remote_file" --env "${envs:+$envs,}SECRETS_FILE=$remote_file" -- "$@" || rc=$?
   rm -f "$local_file"
@@ -262,10 +287,14 @@ sprite-env services start "$SERVICE" >/dev/null
 wait_port
 cat "$RECIPE_FILE"'
 
-# new_sprite <name>: create a Sprite. Fails if one with that name exists already.
+# name_is_free <name>: fail if a Sprite with that name exists, so cleanup never touches it.
+name_is_free() {
+  [ -z "$(sprite_url "$1")" ] || die "a Sprite named $1 already exists; not touching it"
+}
+
+# new_sprite <name>: create a Sprite.
 new_sprite() {
   local name="$1"
-  [ -z "$(sprite_url "$name")" ] || die "a Sprite named $name already exists; not touching it"
   log "creating Sprite $name"
   # Drop the CLI's boxed "try the API" tip, which Orca shows in its provisioning log.
   sp create --skip-console --label orca-recipe "$name" 2>&1 | { grep -v -e '^│' -e '^[[:space:]]*$' || true; } >&2
@@ -276,7 +305,7 @@ build_sprite() {
   local name="$1"
   sp config update --url-auth public "$name" >&2
   log "installing Orca $orca_version and cloning $repo_url@$repo_ref"
-  with_secrets "$name" "ORCA_VERSION=$orca_version,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_PROJECT_ROOT=$project_root" \
+  with_secrets "$name" git "ORCA_VERSION=$orca_version,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_PROJECT_ROOT=$project_root" \
     bash -lc "$remote_build" >&2
 }
 
@@ -292,7 +321,7 @@ serve_sprite() {
   local name="$1" url
   url="$(sprite_url "$name")"; [ -n "$url" ] || die "no URL for Sprite $name"
   [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ] || log "warning: neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set; claude will ask to log in"
-  with_secrets "$name" "$(remote_env "$url")" bash -lc "$remote_serve"
+  with_secrets "$name" agent "$(remote_env "$url")" bash -lc "$remote_serve"
 }
 
 # emit_result <recipe-json> <name>: merge userData and print.

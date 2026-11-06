@@ -23,8 +23,8 @@ Sprite.
 3. Turn on **Settings → Experimental → Cloud VM**.
 4. Give the agent a credential in the environment Orca starts from:
    `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. On macOS a
-   Dock-launched Orca does not see shell exports; start Orca from a terminal or use
-   `launchctl setenv`.
+   Dock-launched Orca does not see shell exports or your shell's `PATH` (where `sprite`,
+   `node` and `git` live); start Orca from a terminal, or use `launchctl setenv`.
 5. Create a workspace and pick **Run on → Per-Workspace Environment → Sprites**.
 
 The repository must have an `origin` remote that the Sprite can clone over HTTPS. For a
@@ -39,14 +39,24 @@ Everything has a default. To change one, set the variable in the environment Orc
 |---|---|
 | `SPRITES_ORG` | The `sprite` CLI's default organization |
 | `SPRITES_REPO_URL` | The repository's `origin` remote |
-| `SPRITES_REPO_REF` | The workspace's base branch, then `origin`'s default branch |
+| `SPRITES_REPO_REF` | `origin`'s default branch |
 | `SPRITES_PROJECT_ROOT` | `/home/sprite/<repository name>` |
-| `SPRITES_ORCA_VERSION` | The version of Orca you are running |
+| `SPRITES_ORCA_VERSION` | The version of your Orca CLI (`orca-ide --version`), else 1.4.246 |
 | `SPRITES_NAME_PREFIX` | `orca` |
 
 Each workspace's Sprite has a **public** URL. The Orca client cannot send Sprites auth
 headers, so the pairing code is the credential: keep it private. See
 [provider-sprites.md](provider-sprites.md) for why, and for the design and measured timings.
+
+## Troubleshooting
+
+- **A workspace failed and the Sprite is still there.** The recipe destroys the Sprite when
+  `create` fails, but if you cancel a workspace while it is being created, Orca may stop the
+  recipe before that finishes. List leftovers with `sprite list --prefix orca-` and remove
+  one with `sprite destroy --force <name>`.
+- **"the sprite CLI is not on PATH"** or **"node is not on PATH"**: Orca does not see your
+  shell's `PATH`. Start Orca from a terminal.
+- **"no Sprites org"**: run `sprite login`, or set `SPRITES_ORG`.
 
 ## Develop
 

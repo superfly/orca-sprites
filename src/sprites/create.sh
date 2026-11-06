@@ -14,8 +14,11 @@ max=$((55 - ${#instance_hash} - 1))
 name="$(sanitize_name "$(printf '%s' "$name_prefix-$recipe_id" | cut -c1-"$max")-$instance_hash")"
 [ "${#name}" -le 55 ] || die "Sprite name too long: $name"
 
-new_sprite "$name"
-# Armed only once this script has created the Sprite, so cleanup never touches one it did not make.
+name_is_free "$name"
+# Armed before `sprite create`, which can fail after the Sprite exists. The name was free a
+# moment ago, so any Sprite with it is ours; destroy_sprite tolerates "not found". On cancel,
+# Orca stops this process group and kills it 5 s later, so cleanup may not finish; find
+# leftovers with: sprite list --prefix orca-
 ok=0
 cleanup() {
   [ "$ok" = 1 ] && return 0
@@ -23,6 +26,7 @@ cleanup() {
   destroy_sprite "$name" || true
 }
 trap cleanup EXIT
+new_sprite "$name"
 
 build_sprite "$name"
 recipe_json="$(serve_sprite "$name")"
