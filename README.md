@@ -1,4 +1,23 @@
-# Sprites for Orca
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/lockup-dark.svg">
+    <img alt="Fly.io and Orca" src="docs/lockup-light.svg" width="300">
+  </picture>
+</p>
+
+<h1 align="center">Sprites for Orca</h1>
+
+<p align="center">
+  Run each <a href="https://github.com/stablyai/orca">Orca</a> workspace in its own Sprite,
+  a persistent Linux VM from <a href="https://fly.io">Fly.io</a>.
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="provider-sprites.md">How it works</a> ·
+  <a href="https://docs.sprites.dev">Sprites docs</a> ·
+  <a href="LICENSE">MIT license</a>
+</p>
 
 <p align="center">
   <picture>
