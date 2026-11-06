@@ -18,8 +18,9 @@ Sprite.
 
 1. Install the [`sprite` CLI](https://docs.sprites.dev) and run `sprite login`, or export
    `SPRITE_TOKEN`. You also need `node` and `git`.
-2. In Orca, open **Settings → Plugins → Install from link** and enter
-   `https://github.com/superfly/orca-sprites`. Approve the recipe when Orca asks.
+2. In Orca, open **Settings → Plugins → Add plugin → From a Git URL…**, enter
+   `https://github.com/superfly/orca-sprites`, then **Continue** and **Install**. Orca asks
+   you to confirm that you trust the publisher. Then turn the plugin on.
 3. Turn on **Settings → Experimental → Cloud VM**.
 4. Give the agent a credential in the environment Orca starts from:
    `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. On macOS a
@@ -73,3 +74,7 @@ orca plugin dev load .            # load this folder into Orca
 `dev/run-phase.sh <phase> <repo>` runs one phase of the built recipe the way Orca does, and
 `dev/lifecycle-test.sh <repo>` runs create, idle wake, suspend, resume and destroy against a
 real Orca client.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -10,6 +10,7 @@
     "url": "https://fly.io"
   },
   "repository": "https://github.com/superfly/orca-sprites",
+  "license": "MIT",
   "homepage": "https://sprites.dev",
   "engines": {
     "orca": ">=1.4.246"
