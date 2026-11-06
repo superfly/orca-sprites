@@ -183,6 +183,22 @@ umask 077
 : > "$AGENT_ENV_FILE"
 [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || printf "export CLAUDE_CODE_OAUTH_TOKEN=%q\n" "$CLAUDE_CODE_OAUTH_TOKEN" >> "$AGENT_ENV_FILE"
 [ -z "${ANTHROPIC_API_KEY:-}" ] || printf "export ANTHROPIC_API_KEY=%q\n" "$ANTHROPIC_API_KEY" >> "$AGENT_ENV_FILE"
+# Claude Code: trust the project folder, and pre-approve an API key so the first run does not
+# stop at "Do you want to use this API key?". Only the last 20 characters of the key are stored,
+# which is what Claude Code itself records.
+node -e "
+  const fs = require(\"node:fs\"), p = process.env.HOME + \"/.claude.json\";
+  let c = {}; try { c = JSON.parse(fs.readFileSync(p, \"utf8\")); } catch {}
+  c.projects = c.projects || {};
+  c.projects[process.env.ORCA_PROJECT_ROOT] = { ...(c.projects[process.env.ORCA_PROJECT_ROOT] || {}), hasTrustDialogAccepted: true };
+  const k = process.env.ANTHROPIC_API_KEY;
+  if (k) {
+    c.customApiKeyResponses = c.customApiKeyResponses || { approved: [], rejected: [] };
+    const tail = k.slice(-20);
+    if (!c.customApiKeyResponses.approved.includes(tail)) c.customApiKeyResponses.approved.push(tail);
+  }
+  fs.writeFileSync(p, JSON.stringify(c, null, 2), { mode: 0o600 });
+"
 grep -q "orca-agent.env" "$HOME/.bashrc" 2>/dev/null || printf "%s\n" "[ -f \"$AGENT_ENV_FILE\" ] && . \"$AGENT_ENV_FILE\"" >> "$HOME/.bashrc"
 unset GH_TOKEN
 serve_args=(--port "$ORCA_PORT" --project-root "$ORCA_PROJECT_ROOT" --pairing-address "$ORCA_PAIRING_ADDRESS")
@@ -231,7 +247,8 @@ new_sprite() {
   local name="$1"
   [ -z "$(sprite_url "$name")" ] || die "a Sprite named $name already exists; not touching it"
   log "creating Sprite $name"
-  sp create --skip-console --label orca-recipe "$name" >&2
+  # Drop the CLI's boxed "try the API" tip, which Orca shows in its provisioning log.
+  sp create --skip-console --label orca-recipe "$name" 2>&1 | { grep -v -e '^│' -e '^[[:space:]]*$' || true; } >&2
 }
 
 # build_sprite <name>: give a new Sprite a public URL, install Orca, check out the repo.

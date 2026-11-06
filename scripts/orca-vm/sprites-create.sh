@@ -4,11 +4,13 @@
 set -euo pipefail
 . "$(dirname "$0")/sprites-lib.sh"
 
+# Sprite names are at most 55 characters, and Orca's ORCA_VM_INSTANCE_ID is a UUID, so the
+# name carries a 12-character hash of the instance id rather than the id itself.
 recipe_id="$(sanitize_name "${ORCA_RECIPE_ID:-sprites}")"
-instance_id="$(sanitize_name "${ORCA_VM_INSTANCE_ID:-$(date +%s)-$RANDOM}")"
-max=$((63 - ${#name_prefix} - ${#instance_id} - 2))
-[ "$max" -gt 0 ] || die "ORCA_VM_INSTANCE_ID is too long for a Sprite name"
-name="$(sanitize_name "$name_prefix-${recipe_id:0:max}-$instance_id")"
+instance_hash="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0, 12))' "${ORCA_VM_INSTANCE_ID:-$(date +%s)-$RANDOM}")"
+max=$((55 - ${#instance_hash} - 1))
+name="$(sanitize_name "$(printf '%s' "$name_prefix-$recipe_id" | cut -c1-"$max")-$instance_hash")"
+[ "${#name}" -le 55 ] || die "Sprite name too long: $name"
 
 new_sprite "$name"
 # Armed only once this script has created the Sprite, so cleanup never touches one it did not make.

@@ -129,6 +129,12 @@ Pass the full `wss://` URL to `--pairing-address`. A host name alone gives
 - **Lifecycle scripts must fail when `sprite` fails.** Treat a Sprite as gone only when
   `sprite destroy` says "sprite not found". An expired login must not be reported as a
   successful destroy.
+- **Sprite names are at most 55 characters.** Orca's `ORCA_VM_INSTANCE_ID` is a UUID, so the
+  name carries a 12-character hash of it instead.
+- **Claude Code first-run prompts.** The serve step marks the project folder as trusted and,
+  when `ANTHROPIC_API_KEY` is used, records the key's last 20 characters as approved, as
+  Claude Code itself does. With Orca's default Yolo mode, Claude Code still asks once to
+  accept `--dangerously-skip-permissions`; the recipe leaves that choice to the user.
 - `sprite exec` returns the remote exit code.
 - `sprite exec --env` takes `KEY=value,KEY2=value2`, so values must not contain commas. The
   scripts refuse such values.

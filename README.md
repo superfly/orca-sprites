@@ -28,7 +28,10 @@ the Sprite, and the Orca client pairs with `orca serve` over the Sprite's URL.
    repository, also `GH_TOKEN`, `GITHUB_TOKEN`, or a logged-in `gh`. On macOS, start Orca from a
    terminal (a Dock launch does not see shell exports) or use `launchctl setenv`. The git token
    is only used to clone; it is not left on the Sprite.
-5. Check it:
+5. In Orca, turn on **Settings → Experimental → Cloud VM**. Then **New workspace → Run on →
+   Per-Workspace Environment → Sprites**. Orca asks once whether to trust the repo's
+   `orca.yaml` before it runs the recipe.
+6. Check it:
 
    ```bash
    orca vm recipe doctor sprites --repo-path . --json
