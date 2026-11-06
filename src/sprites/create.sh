@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Orca recipe `create` for Sprites (Orca-server mode). Builds a new Sprite, starts
+# Recipe `create` phase (Orca-server mode). Builds a new Sprite, starts
 # `orca serve` as a Sprite service and prints one recipe-result JSON object.
 set -euo pipefail
-. "$(dirname "$0")/sprites-lib.sh"
+. "$(dirname "$0")/lib.sh"  # inlined by scripts/build.mjs
 
 # Sprite names are at most 55 characters, and Orca's ORCA_VM_INSTANCE_ID is a UUID, so the
 # name carries a 12-character hash of the instance id rather than the id itself.
+ensure_org
+resolve_repo
 recipe_id="$(sanitize_name "${ORCA_RECIPE_ID:-sprites}")"
 instance_hash="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0, 12))' "${ORCA_VM_INSTANCE_ID:-$(date +%s)-$RANDOM}")"
 max=$((55 - ${#instance_hash} - 1))

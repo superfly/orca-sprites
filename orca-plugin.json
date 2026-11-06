@@ -1,0 +1,37 @@
+{
+  "manifestVersion": 2,
+  "id": "sprites",
+  "name": "Sprites",
+  "version": "0.1.0",
+  "execution": "declarative",
+  "description": "Run each Orca workspace in its own Sprite, a persistent Linux VM from Fly.io. Adds Sprites under Run on > Per-Workspace Environment.",
+  "author": { "name": "Fly.io", "url": "https://fly.io" },
+  "repository": "https://github.com/superfly/orca-sprites",
+  "homepage": "https://sprites.dev",
+  "engines": { "orca": ">=1.4.246" },
+  "contributes": {
+    "vmRecipes": [{ "path": "recipes/sprites.json" }]
+  },
+  "capabilities": [],
+  "cover": {
+    "path": "images/cover.png",
+    "alt": "Orca's Create worktree dialog with Run on open at Per-Workspace Environment, showing Sprites as the recipe"
+  },
+  "screenshots": [
+    {
+      "path": "images/trust.jpg",
+      "alt": "Orca asks before running the Sprites recipe and shows its create, suspend, resume and destroy commands",
+      "caption": "Orca shows the recipe before it runs"
+    },
+    {
+      "path": "images/provisioning.jpg",
+      "alt": "Provisioning VM: the recipe log shows a new Sprite being created, Orca being installed and the repository being cloned",
+      "caption": "The recipe builds a new Sprite"
+    },
+    {
+      "path": "images/claude-in-sprite.jpg",
+      "alt": "Claude Code in the workspace writes GREETING.md, which reads Hello from orca-demo-sprites-1f3f5676adb1 (Linux 6.1.182-s2)",
+      "caption": "Claude Code runs inside the Sprite"
+    }
+  ]
+}

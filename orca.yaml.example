@@ -1,7 +1,0 @@
-environmentRecipes:
-  - id: sprites
-    name: Sprites
-    create: ./scripts/orca-vm/sprites-create.sh
-    suspend: ./scripts/orca-vm/sprites-suspend.sh
-    resume: ./scripts/orca-vm/sprites-resume.sh
-    destroy: ./scripts/orca-vm/sprites-destroy.sh

@@ -1,49 +1,35 @@
 # shellcheck shell=bash
-# Shared helpers for the Sprites recipe scripts. Sourced, not executed.
+# Shared helpers for the Sprites recipe. scripts/build.mjs inlines this file into every
+# phase of recipes/sprites.json, because a plugin recipe must be self-contained.
 #
-# Every script keeps stdout for its one JSON result. Everything else goes to stderr.
-
-orca_vm_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-state_file="${ORCA_SPRITES_STATE:-$orca_vm_dir/sprites-state.json}"
+# Every phase keeps stdout for its one JSON result. Everything else goes to stderr.
+#
+# Orca runs each phase in the repository's root directory and sets ORCA_* variables
+# (ORCA_VM_INSTANCE_ID, ORCA_REPO_REF, ORCA_REPO_PATH, ORCA_VERSION, ...). Optional
+# overrides, read from the environment Orca was started from:
+#   SPRITES_ORG            Sprites organization (default: the sprite CLI's default org)
+#   SPRITES_REPO_URL       repository to clone (default: the repo's origin remote)
+#   SPRITES_REPO_REF       branch or tag to check out (default: Orca's base ref, then origin's default branch)
+#   SPRITES_PROJECT_ROOT   checkout path on the Sprite (default: /home/sprite/<repo name>)
+#   SPRITES_ORCA_VERSION   orca-ide version to install (default: the running Orca's version)
+#   SPRITES_NAME_PREFIX    Sprite name prefix (default: orca)
 
 log() { printf '[sprites] %s\n' "$*" >&2; }
 die() { printf '[sprites] error: %s\n' "$*" >&2; exit 1; }
 
-command -v sprite >/dev/null 2>&1 || die "the sprite CLI is not on PATH (install: curl -fsSL https://sprites.dev/install.sh | bash)"
-command -v node >/dev/null 2>&1 || die "node is not on PATH; the recipe scripts use it to read and write JSON"
+command -v sprite >/dev/null 2>&1 || die "the sprite CLI is not on PATH (install: curl -fsSL https://sprites.dev/install.sh | bash, then sprite login)"
+command -v node >/dev/null 2>&1 || die "node is not on PATH; the recipe uses it to read and write JSON"
 
-# json_value <key> [fallback]: a top-level value from the state file.
-json_value() {
-  node -e '
-    const fs = require("node:fs");
-    let s = {};
-    try { s = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch {}
-    const v = s[process.argv[2]];
-    process.stdout.write(v === undefined || v === null || v === "" ? (process.argv[3] ?? "") : String(v));
-  ' "$state_file" "$1" "${2:-}"
-}
-
-# setting <ENV_NAME> <stateKey> [fallback]: env var, then state, then fallback.
-setting() {
-  local env_name="$1" key="$2" fallback="${3:-}"
-  if [ -n "${!env_name:-}" ]; then printf '%s' "${!env_name}"; else json_value "$key" "$fallback"; fi
-}
-
-org="$(setting ORCA_SPRITES_ORG org)"
-repo_url="$(setting ORCA_REPO_URL repoUrl)"
-repo_ref="$(setting ORCA_REPO_REF repoRef main)"
-project_root="$(setting ORCA_PROJECT_ROOT projectRoot /home/sprite/project)"
-orca_version="$(setting ORCA_SPRITES_ORCA_VERSION orcaVersion 1.4.246)"
-name_prefix="$(setting ORCA_SPRITES_PREFIX namePrefix orca)"
+org="${SPRITES_ORG:-}"
+repo_url="" repo_ref="" project_root=""
+name_prefix="${SPRITES_NAME_PREFIX:-orca}"
+orca_version="${SPRITES_ORCA_VERSION:-${ORCA_VERSION:-1.4.246}}"
+orca_version="${orca_version#v}"
 # The Sprite URL routes to port 8080.
 port=8080
 service_name="orca"
 recipe_file="/home/sprite/.orca-recipe.json"
 agent_env_file="/home/sprite/.orca-agent.env"
-
-[ -n "$org" ] || die "no Sprites org: set ORCA_SPRITES_ORG or \"org\" in $state_file"
-[ -n "$repo_url" ] || die "no repository: set ORCA_REPO_URL or \"repoUrl\" in $state_file"
-case "$project_root" in /*) ;; *) die "projectRoot must be an absolute path on the Sprite: $project_root" ;; esac
 
 sp() { sprite -o "$org" "$@"; }
 
@@ -52,17 +38,51 @@ sp() { sprite -o "$org" "$@"; }
 # (orca serve opens 8080) on the desktop.
 rexec() { local name="$1"; shift; sp exec -s "$name" --no-stdin --no-port-forward "$@"; }
 
-# use_payload_org <payload>: lifecycle scripts act in the org the Sprite was created in.
+# ensure_org: use SPRITES_ORG, or the org the sprite CLI uses by default.
+ensure_org() {
+  [ -n "$org" ] && return 0
+  org="$(sprite --json list 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write(JSON.parse(d).org?.name||"")}catch{}})')"
+  [ -n "$org" ] || die "no Sprites org: run 'sprite login', or set SPRITES_ORG in the environment Orca starts from"
+}
+
+# use_payload_org <payload>: lifecycle phases act in the org the Sprite was created in.
 use_payload_org() {
   local o; o="$(payload_value "$1" org)"
-  if [ -n "$o" ] && [ "$o" != "$org" ]; then log "using org $o from the lifecycle payload"; org="$o"; fi
+  [ -z "$o" ] || org="$o"
+  ensure_org
 }
 
 # `sprite exec --env` splits on commas, so a value with a comma would be misparsed.
 check_env_value() {
   case "$2" in *,*) die "$1 must not contain a comma (sprite exec --env splits on commas): $2" ;; esac
 }
-for v in repo_url repo_ref project_root orca_version; do check_env_value "$v" "${!v}"; done
+
+# resolve_repo: repo_url, repo_ref and project_root for the create phase.
+resolve_repo() {
+  local repo_dir="${ORCA_REPO_PATH:-$PWD}" ref
+  repo_url="${SPRITES_REPO_URL:-${ORCA_REPO_URL:-}}"
+  [ -n "$repo_url" ] || repo_url="$(git -C "$repo_dir" remote get-url origin 2>/dev/null || true)"
+  [ -n "$repo_url" ] || die "no repository URL: the repo has no 'origin' remote; add one or set SPRITES_REPO_URL"
+  # Never carry credentials from the remote URL onto the Sprite; the git token goes separately.
+  repo_url="$(printf '%s' "$repo_url" | sed -E 's#^(https?://)[^/@]+@#\1#')"
+  case "$repo_url" in
+    https://*|http://*) ;;
+    git@*:*) repo_url="${repo_url#git@}"; repo_url="https://${repo_url/://}" ;;
+    *) die "the Sprite clones over HTTPS, so the origin remote must be a hosted URL, not $repo_url (set SPRITES_REPO_URL)" ;;
+  esac
+  ref="${SPRITES_REPO_REF:-${ORCA_REPO_REF:-}}"
+  ref="${ref#refs/heads/}"; ref="${ref#refs/remotes/origin/}"; ref="${ref#origin/}"
+  if [ -z "$ref" ]; then
+    ref="$(git -C "$repo_dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    ref="${ref#origin/}"
+  fi
+  repo_ref="${ref:-main}"
+  local base="${repo_url%/}"; base="${base##*/}"; base="${base%.git}"
+  project_root="${SPRITES_PROJECT_ROOT:-/home/sprite/${base:-project}}"
+  case "$project_root" in /*) ;; *) die "SPRITES_PROJECT_ROOT must be an absolute path on the Sprite: $project_root" ;; esac
+  for v in repo_url repo_ref project_root orca_version; do check_env_value "$v" "${!v}"; done
+  log "repository $repo_url at $repo_ref, checked out at $project_root"
+}
 
 # Git token for private repositories. Never written into state or JSON.
 git_token() {

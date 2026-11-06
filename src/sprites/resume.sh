@@ -2,7 +2,7 @@
 # Orca recipe `resume` for Sprites. Wakes the Sprite, starts the orca service again and
 # prints the recipe JSON. The URL and the pairing identity do not change.
 set -euo pipefail
-. "$(dirname "$0")/sprites-lib.sh"
+. "$(dirname "$0")/lib.sh"  # inlined by scripts/build.mjs
 payload="$(cat)"
 name="$(payload_value "$payload" resourceId)"
 [ -n "$name" ] || die "no userData.resourceId in the lifecycle payload"

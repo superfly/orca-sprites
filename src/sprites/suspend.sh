@@ -2,7 +2,7 @@
 # Orca recipe `suspend` for Sprites. Stops orca serve so no connection keeps the Sprite
 # awake; the Sprite then sleeps on its own and costs nothing for compute.
 set -euo pipefail
-. "$(dirname "$0")/sprites-lib.sh"
+. "$(dirname "$0")/lib.sh"  # inlined by scripts/build.mjs
 payload="$(cat)"
 name="$(payload_value "$payload" resourceId)"
 [ -n "$name" ] || die "no userData.resourceId in the lifecycle payload"

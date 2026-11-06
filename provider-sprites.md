@@ -53,34 +53,38 @@ the org. Browser-based Orca clients may not send URL credentials at all. A publi
 the pairing code scoped to one Orca server, which matches Orca's Vercel example. A token
 scoped to one Sprite's URL would change this trade-off.
 
-## Scripts
+## Packaging: an Orca plugin
 
-| File | Does |
+The recipe ships as a **declarative** Orca plugin: `orca-plugin.json` contributes
+`recipes/sprites.json` through `contributes.vmRecipes`, so Sprites appears under Run on for
+every repository and nothing is copied into repos. Orca asks once to approve the recipe's
+commands; there is no plugin worker and no host-API capability.
+
+A plugin recipe must be self-contained (each command is a string of at most 32 KiB), so
+`scripts/build.mjs` inlines `src/sprites/lib.sh` into each phase and wraps it as
+`bash -c "$(cat <<'ORCA_SPRITES_SCRIPT' … ORCA_SPRITES_SCRIPT)"`. Orca runs every phase with
+`sh -c` (dash on Debian and Ubuntu) in the repository's root; the quoted heredoc carries the
+bash script, and stdin stays free for the lifecycle payload.
+
+| Source | Does |
 |---|---|
-| `sprites-lib.sh` | Settings (env, then `sprites-state.json`, then default), remote fragments |
-| `sprites-create.sh` | Builds a Sprite, starts the `orca` service, prints the recipe JSON. Destroys the Sprite if any step fails. |
-| `sprites-suspend.sh` | Stops the `orca` service |
-| `sprites-resume.sh` | Starts the `orca` service, prints the saved recipe JSON |
-| `sprites-destroy.sh` | Destroys the Sprite. It succeeds if the Sprite is already gone. |
+| `src/sprites/lib.sh` | Settings, the `sprite` wrappers and the remote fragments |
+| `src/sprites/create.sh` | Builds a Sprite, starts the `orca` service, prints the recipe JSON. Destroys the Sprite if any step fails. |
+| `src/sprites/suspend.sh` | Stops the `orca` service |
+| `src/sprites/resume.sh` | Starts the `orca` service, prints the saved recipe JSON |
+| `src/sprites/destroy.sh` | Destroys the Sprite. It succeeds if the Sprite is already gone. |
 
-State (`scripts/orca-vm/sprites-state.json`) holds only non-secret wiring:
-
-```json
-{
-  "org": "<sprites-org>",
-  "repoUrl": "https://github.com/<owner>/<repo>",
-  "repoRef": "main",
-  "projectRoot": "/home/sprite/project",
-  "orcaVersion": "1.4.246",
-  "namePrefix": "orca"
-}
-```
+There is no state file. `create` takes its settings from what Orca and the desktop already
+know: Orca's `ORCA_REPO_REF` (the base branch) and `ORCA_VERSION`, the repository's `origin`
+remote (Orca sets `ORCA_REPO_URL` only for `provisioned-root` recipes), and the `sprite`
+CLI's default organization. `SPRITES_*` variables override each one; see the README. The
+lifecycle phases take the Sprite name and organization from `userData` in the payload.
 
 Prerequisites on the desktop: the `sprite` CLI logged in to the org (`sprite login`, or
-`SPRITE_TOKEN` in the environment), `node`, the agent credential in the environment Orca
-starts from, and for a private repo `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`. On macOS, an
-Orca started from the Dock does not see shell exports: start Orca from a terminal, or set the
-variables with `launchctl setenv`.
+`SPRITE_TOKEN` in the environment), `node`, `git`, the agent credential in the environment
+Orca starts from, and for a private repo `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`. On
+macOS, an Orca started from the Dock does not see shell exports: start Orca from a terminal,
+or set the variables with `launchctl setenv`.
 
 The git token is used only to clone and is deleted afterwards, so `git fetch` and `git push`
 from inside the workspace need their own credentials (for example `gh auth login` in the
@@ -171,9 +175,15 @@ client that retries reconnects in about 20 s.
 `orca vm recipe doctor sprites --provision` passed in 72 s, and in 78 s after the changes
 (create, validate, destroy).
 
-## Doctor
+## Checks
+
+`orca vm recipe doctor` reads recipes from a repository's `orca.yaml`, so it does not cover a
+plugin recipe. Instead:
 
 ```bash
-orca vm recipe doctor sprites --repo-path . --json             # static: no fail, no warn
-orca vm recipe doctor sprites --repo-path . --provision --json # create, validate, destroy
+node scripts/build.mjs --check                   # recipes/sprites.json matches src/
+orca plugin validate . --json                    # manifest and recipe, as Orca loads them
+orca plugin inspect . --json                     # what it contributes and asks to approve
+dev/run-phase.sh create <repo> < /dev/null       # one phase, run the way Orca runs it
+dev/lifecycle-test.sh <repo>                     # create, wake, suspend, resume, destroy
 ```
