@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "sprites",
   "name": "Sprites",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "execution": "declarative",
   "description": "Run each Orca workspace in its own Sprite, a persistent Linux VM from Fly.io. Adds Sprites under Run on > Per-Workspace Environment.",
   "author": {
