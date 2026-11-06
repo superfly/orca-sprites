@@ -12,13 +12,6 @@
   a persistent Linux VM from <a href="https://fly.io">Fly.io</a>.
 </p>
 
-<p align="center">
-  <a href="#install">Install</a> ·
-  <a href="provider-sprites.md">How it works</a> ·
-  <a href="https://docs.sprites.dev">Sprites docs</a> ·
-  <a href="LICENSE">MIT license</a>
-</p>
-
 An [Orca](https://github.com/stablyai/orca) plugin that runs each workspace in its own
 [Sprite](https://sprites.dev), a persistent Linux VM from Fly.io. It adds **Sprites** under
 **Run on → Per-Workspace Environment** for every repository. Nothing is added to your repos.
@@ -35,7 +28,7 @@ Sprite.
 
 ## Install
 
-1. Install the [`sprite` CLI](https://docs.sprites.dev) and run `sprite login`, or export
+1. Install the [`sprite` CLI](https://docs.fly.io/sprites) and run `sprite login`, or export
    `SPRITE_TOKEN`. You also need `node` and `git`.
 2. In Orca, open **Settings → Plugins → Add plugin → From a Git URL…**, enter
    `https://github.com/superfly/orca-sprites`, then **Continue** and **Install**. Orca asks
