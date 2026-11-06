@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "sprites",
   "name": "Sprites",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "execution": "declarative",
   "description": "Run each Orca workspace in its own Sprite, a persistent Linux VM from Fly.io. Adds Sprites under Run on > Per-Workspace Environment.",
   "author": {
@@ -24,10 +24,15 @@
   },
   "capabilities": [],
   "cover": {
-    "path": "images/cover.png",
-    "alt": "Orca's Create worktree dialog with Run on open at Per-Workspace Environment, showing Sprites as the recipe"
+    "path": "images/cover.jpg",
+    "alt": "Sprites for Orca, with the Fly.io logo, beside an illustration of the Fly.io balloon in swim goggles swimming underwater with fish"
   },
   "screenshots": [
+    {
+      "path": "images/run-on.png",
+      "alt": "Orca's Create worktree dialog with Run on open at Per-Workspace Environment, showing Sprites as the recipe",
+      "caption": "Pick Sprites under Run on"
+    },
     {
       "path": "images/provisioning.jpg",
       "alt": "Provisioning VM: the recipe log shows a new Sprite being created, Orca being installed and the repository being cloned",

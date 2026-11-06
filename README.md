@@ -90,3 +90,6 @@ real Orca client.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The cover illustration in `images/cover.jpg` is by Annie Ruygt for Fly.io and is not covered by
+the MIT license.
