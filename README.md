@@ -19,13 +19,6 @@
   <a href="LICENSE">MIT license</a>
 </p>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.webp">
-    <img alt="In Orca, a new workspace runs on Sprites: Orca builds a Sprite for it, then Claude Code writes GREETING.md inside that Sprite, with the Sprite's hostname" src="docs/hero-light.webp" width="900">
-  </picture>
-</p>
-
 An [Orca](https://github.com/stablyai/orca) plugin that runs each workspace in its own
 [Sprite](https://sprites.dev), a persistent Linux VM from Fly.io. It adds **Sprites** under
 **Run on → Per-Workspace Environment** for every repository. Nothing is added to your repos.
