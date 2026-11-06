@@ -11,7 +11,7 @@
   },
   "repository": "https://github.com/superfly/orca-sprites",
   "license": "MIT",
-  "homepage": "https://sprites.dev",
+  "homepage": "https://fly.io/sprites",
   "engines": {
     "orca": ">=1.4.246"
   },

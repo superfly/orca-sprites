@@ -13,7 +13,7 @@
 </p>
 
 An [Orca](https://github.com/stablyai/orca) plugin that runs each workspace in its own
-[Sprite](https://sprites.dev), a persistent Linux VM from Fly.io. It adds **Sprites** under
+[Sprite](https://fly.io/sprites), a persistent Linux VM from Fly.io. It adds **Sprites** under
 **Run on → Per-Workspace Environment** for every repository. Nothing is added to your repos.
 
 When you create a workspace on Sprites, the recipe:
