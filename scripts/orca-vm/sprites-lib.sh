@@ -47,8 +47,22 @@ case "$project_root" in /*) ;; *) die "projectRoot must be an absolute path on t
 
 sp() { sprite -o "$org" "$@"; }
 
-# rexec <sprite> [--env K=V,...] -- <cmd...>: run on the Sprite. Returns the remote exit code.
-rexec() { local name="$1"; shift; sp exec -s "$name" --no-stdin "$@"; }
+# rexec <sprite> [--env K=V,...] [--file src:dest] -- <cmd...>: run on the Sprite. Returns the
+# remote exit code. --no-port-forward stops the CLI from binding ports the command opens
+# (orca serve opens 8080) on the desktop.
+rexec() { local name="$1"; shift; sp exec -s "$name" --no-stdin --no-port-forward "$@"; }
+
+# use_payload_org <payload>: lifecycle scripts act in the org the Sprite was created in.
+use_payload_org() {
+  local o; o="$(payload_value "$1" org)"
+  if [ -n "$o" ] && [ "$o" != "$org" ]; then log "using org $o from the lifecycle payload"; org="$o"; fi
+}
+
+# `sprite exec --env` splits on commas, so a value with a comma would be misparsed.
+check_env_value() {
+  case "$2" in *,*) die "$1 must not contain a comma (sprite exec --env splits on commas): $2" ;; esac
+}
+for v in repo_url repo_ref project_root orca_version; do check_env_value "$v" "${!v}"; done
 
 # Git token for private repositories. Never written into state or JSON.
 git_token() {
@@ -63,22 +77,56 @@ sanitize_name() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed -E 's/-+/-/g; s/^-//; s/-$//'
 }
 
+# sprite_url <name>: the Sprite's URL, empty if there is no such Sprite. Fails if the list
+# call fails, so an expired login is never mistaken for "no Sprite".
 sprite_url() {
-  sp --json list --prefix "$1" | node -e '
+  local out
+  out="$(sp --json list --prefix "$1")" || die "could not list Sprites in org $org (is the sprite CLI logged in?)"
+  printf '%s' "$out" | node -e '
     let d = ""; process.stdin.on("data", c => d += c).on("end", () => {
       const s = (JSON.parse(d).sprites || []).find(x => x.name === process.argv[1]);
       process.stdout.write(s?.url ?? "");
     });' "$1"
 }
 
+# destroy_sprite <name>: succeeds if the Sprite is destroyed or does not exist; fails on any
+# other error, so a Sprite is never left running behind a reported success.
 destroy_sprite() {
-  local name="$1"
-  if [ -n "$(sprite_url "$name")" ]; then sp destroy --force "$name" >&2; else log "$name is already gone"; fi
+  local name="$1" out rc=0
+  out="$(sp destroy --force "$name" 2>&1)" || rc=$?
+  printf '%s\n' "$out" >&2
+  [ "$rc" = 0 ] && return 0
+  case "$out" in *"sprite not found"*) log "$name is already gone"; return 0 ;; esac
+  log "could not destroy $name; destroy it by hand: sprite -o $org destroy --force $name"
+  return 1
+}
+
+# with_secrets <sprite> <env K=V,...> <cmd...>: run a command with the secrets uploaded as a file, so
+# no token is on a command line on the desktop or the Sprite. The remote fragment sources
+# $SECRETS_FILE and deletes it. Secrets: GH_TOKEN (git), CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY.
+with_secrets() {
+  local name="$1" envs="$2"; shift 2
+  local local_file remote_file token rc=0
+  local_file="$(umask 077; mktemp "${TMPDIR:-/tmp}/orca-sprites.XXXXXX")"
+  remote_file="/tmp/orca-secrets-$(date +%s)-$RANDOM$RANDOM.env"
+  token="$(git_token)"
+  {
+    [ -z "$token" ] || printf 'export GH_TOKEN=%q\n' "$token"
+    [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$CLAUDE_CODE_OAUTH_TOKEN"
+    [ -z "${ANTHROPIC_API_KEY:-}" ] || printf 'export ANTHROPIC_API_KEY=%q\n' "$ANTHROPIC_API_KEY"
+  } > "$local_file"
+  rexec "$name" --file "$local_file:$remote_file" --env "${envs:+$envs,}SECRETS_FILE=$remote_file" -- "$@" || rc=$?
+  rm -f "$local_file"
+  return "$rc"
 }
 
 # Remote fragments run under `bash -lc` on the Sprite. They never call `exit`: in a login
 # shell with `set -e`, `exit` runs ~/.bash_logout, whose clear_console fails without a TTY
 # and turns every exit status into 1. They end on the status of their last command.
+
+# Sources and deletes the uploaded secrets file. The upload lands root-owned and 0644, so it
+# is removed with sudo straight away.
+remote_secrets='if [ -n "${SECRETS_FILE:-}" ] && [ -f "$SECRETS_FILE" ]; then . "$SECRETS_FILE"; sudo rm -f "$SECRETS_FILE"; fi'
 
 remote_askpass='if [ -n "${GH_TOKEN:-}" ]; then
   printf "%s\n" "#!/usr/bin/env bash" "case \"\$1\" in *Username*) echo x-access-token;; *Password*) echo \"\$GH_TOKEN\";; esac" > /tmp/orca-askpass.sh
@@ -87,12 +135,13 @@ fi'
 
 # Installs Orca and checks out the repository.
 remote_build='set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive GIT_TERMINAL_PROMPT=0
+'"$remote_secrets"'
+export GIT_TERMINAL_PROMPT=0
 echo "installing orca-ide $ORCA_VERSION" >&2
 curl -fsSL -o /tmp/orca.deb "https://github.com/stablyai/orca/releases/download/v$ORCA_VERSION/orca-ide_${ORCA_VERSION}_amd64.deb"
 # Without the update, libgtk-3-0 does not resolve on the Sprite image.
-sudo apt-get update -qq >/tmp/orca-apt.log 2>&1
-sudo -E apt-get install -y -qq /tmp/orca.deb >>/tmp/orca-apt.log 2>&1 || { tail -n 30 /tmp/orca-apt.log >&2; false; }
+sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq >/tmp/orca-apt.log 2>&1
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/orca.deb >>/tmp/orca-apt.log 2>&1 || { tail -n 30 /tmp/orca-apt.log >&2; false; }
 rm -f /tmp/orca.deb
 '"$remote_askpass"'
 mkdir -p "$(dirname "$ORCA_PROJECT_ROOT")"
@@ -130,14 +179,12 @@ remote_wait_port='wait_port() {
 # first run keeps working against the supervised server, and after every wake.
 remote_serve='set -euo pipefail
 umask 077
+'"$remote_secrets"'
 : > "$AGENT_ENV_FILE"
 [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || printf "export CLAUDE_CODE_OAUTH_TOKEN=%q\n" "$CLAUDE_CODE_OAUTH_TOKEN" >> "$AGENT_ENV_FILE"
 [ -z "${ANTHROPIC_API_KEY:-}" ] || printf "export ANTHROPIC_API_KEY=%q\n" "$ANTHROPIC_API_KEY" >> "$AGENT_ENV_FILE"
 grep -q "orca-agent.env" "$HOME/.bashrc" 2>/dev/null || printf "%s\n" "[ -f \"$AGENT_ENV_FILE\" ] && . \"$AGENT_ENV_FILE\"" >> "$HOME/.bashrc"
-'"$remote_askpass"'
-export GIT_TERMINAL_PROMPT=0
-cd "$ORCA_PROJECT_ROOT"; git fetch --quiet origin "$ORCA_REPO_REF"; git checkout --quiet -B "$ORCA_REPO_REF" FETCH_HEAD
-rm -f /tmp/orca-askpass.sh
+unset GH_TOKEN
 serve_args=(--port "$ORCA_PORT" --project-root "$ORCA_PROJECT_ROOT" --pairing-address "$ORCA_PAIRING_ADDRESS")
 orca-ide serve "${serve_args[@]}" --recipe-json > "$RECIPE_FILE.tmp" 2>/tmp/orca-serve.log || { cat /tmp/orca-serve.log >&2; false; }
 node -e "const r = JSON.parse(require(\"node:fs\").readFileSync(process.argv[1], \"utf8\")); if (!r.pairingCode) throw new Error(\"no pairingCode\")" "$RECIPE_FILE.tmp"
@@ -145,10 +192,12 @@ mv "$RECIPE_FILE.tmp" "$RECIPE_FILE"
 stop_owner() {
   local f="$1" pid ticks
   [ -f "$f" ] || return 0
-  pid="$(jq -r .pid "$f")"; ticks="$(jq -r .linuxStartTicks "$f")"
+  pid="$(jq -r ".pid // empty" "$f")"; ticks="$(jq -r ".linuxStartTicks // empty" "$f")"
+  [ -n "$pid" ] && [ -n "$ticks" ] || { echo "cannot read pid from $f" >&2; return 1; }
   [ -r "/proc/$pid/stat" ] || return 0
-  # Only signal the process the lock file names, never a recycled PID.
-  [ "$(awk "{print \$22}" "/proc/$pid/stat")" = "$ticks" ] || return 0
+  # Only signal the process the lock file names, never a recycled PID. Field 22 is the start
+  # time; drop the "(comm)" field first, because comm may contain spaces.
+  [ "$(sed "s/.*) //" "/proc/$pid/stat" | awk "{print \$20}")" = "$ticks" ] || return 0
   kill -TERM "$pid"
   for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.1; done
   echo "pid $pid did not stop" >&2; return 1
@@ -156,8 +205,14 @@ stop_owner() {
 orca_data="${XDG_CONFIG_HOME:-$HOME/.config}/orca"
 stop_owner "$orca_data/orcad.lock"
 for f in "$orca_data"/daemon/daemon-v*.pid; do stop_owner "$f"; done
+# The supervised server waits while another Orca serves this profile, so the detached one must
+# really be gone, or wake would find no server.
+for _ in $(seq 1 100); do [ "$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$ORCA_PORT/" 2>/dev/null)" = 000 ] && break; sleep 0.1; done
+[ "$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$ORCA_PORT/" 2>/dev/null)" = 000 ] || { echo "port $ORCA_PORT is still in use after stopping the detached server" >&2; false; }
 sprite-env services delete "$SERVICE" >/dev/null 2>&1 || true
-sprite-env services create "$SERVICE" --restart always --dir "$HOME" -- /bin/bash -c \
+# --http-port makes a request that wakes the Sprite wait until orca serve listens, instead of
+# failing with 502 while it starts.
+sprite-env services create "$SERVICE" --restart always --http-port "$ORCA_PORT" --dir "$HOME" -- /bin/bash -c \
   ". \"$AGENT_ENV_FILE\"; exec orca-ide serve --supervise $(printf "%q " "${serve_args[@]}")" >/dev/null
 '"$remote_wait_port"'
 wait_port
@@ -171,16 +226,21 @@ sprite-env services start "$SERVICE" >/dev/null
 wait_port
 cat "$RECIPE_FILE"'
 
-# build_sprite <name>: create a Sprite with a public URL, install Orca, check out the repo.
-build_sprite() {
-  local name="$1" token
-  token="$(git_token)"
+# new_sprite <name>: create a Sprite. Fails if one with that name exists already.
+new_sprite() {
+  local name="$1"
+  [ -z "$(sprite_url "$name")" ] || die "a Sprite named $name already exists; not touching it"
   log "creating Sprite $name"
   sp create --skip-console --label orca-recipe "$name" >&2
+}
+
+# build_sprite <name>: give a new Sprite a public URL, install Orca, check out the repo.
+build_sprite() {
+  local name="$1"
   sp config update --url-auth public "$name" >&2
   log "installing Orca $orca_version and cloning $repo_url@$repo_ref"
-  rexec "$name" --env "ORCA_VERSION=$orca_version,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_PROJECT_ROOT=$project_root${token:+,GH_TOKEN=$token}" \
-    -- bash -lc "$remote_build" >&2
+  with_secrets "$name" "ORCA_VERSION=$orca_version,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_PROJECT_ROOT=$project_root" \
+    bash -lc "$remote_build" >&2
 }
 
 remote_env() {
@@ -190,16 +250,12 @@ remote_env() {
 }
 
 # serve_sprite <name>: start orca serve on a built Sprite and print its recipe JSON.
+# Agent credentials go to a 0600 file on the Sprite, never to state or userData.
 serve_sprite() {
-  local name="$1" url token envs
+  local name="$1" url
   url="$(sprite_url "$name")"; [ -n "$url" ] || die "no URL for Sprite $name"
-  token="$(git_token)"
-  envs="$(remote_env "$url")${token:+,GH_TOKEN=$token}"
-  # Agent credentials go straight to a 0600 file on the Sprite, never to state or userData.
-  [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || envs+=",CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN"
-  [ -z "${ANTHROPIC_API_KEY:-}" ] || envs+=",ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
   [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ] || log "warning: neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set; claude will ask to log in"
-  rexec "$name" --env "$envs" -- bash -lc "$remote_serve"
+  with_secrets "$name" "$(remote_env "$url")" bash -lc "$remote_serve"
 }
 
 # emit_result <recipe-json> <name>: merge userData and print.

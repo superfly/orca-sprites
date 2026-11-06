@@ -6,6 +6,7 @@ set -euo pipefail
 payload="$(cat)"
 name="$(payload_value "$payload" resourceId)"
 [ -n "$name" ] || die "no userData.resourceId in the lifecycle payload"
+use_payload_org "$payload"
 url="$(sprite_url "$name")"; [ -n "$url" ] || die "Sprite $name no longer exists"
 recipe_json="$(rexec "$name" --env "$(remote_env "$url")" -- bash -lc "$remote_resume")"
 emit_result "$recipe_json" "$name"

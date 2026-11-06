@@ -5,5 +5,6 @@ set -euo pipefail
 payload="$(cat)"
 name="$(payload_value "$payload" resourceId)"
 [ -n "$name" ] || die "no userData.resourceId in the lifecycle payload"
+use_payload_org "$payload"
 destroy_sprite "$name"
 printf '{"ok":true}\n'

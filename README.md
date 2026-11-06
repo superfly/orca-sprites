@@ -25,7 +25,9 @@ the Sprite, and the Orca client pairs with `orca serve` over the Sprite's URL.
 3. Add the recipe to `orca.yaml` on your primary branch (see `orca.yaml.example`).
 4. Export the agent credential in the environment Orca starts from:
    `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. For a private
-   repository, also `GH_TOKEN`, `GITHUB_TOKEN`, or a logged-in `gh`.
+   repository, also `GH_TOKEN`, `GITHUB_TOKEN`, or a logged-in `gh`. On macOS, start Orca from a
+   terminal (a Dock launch does not see shell exports) or use `launchctl setenv`. The git token
+   is only used to clone; it is not left on the Sprite.
 5. Check it:
 
    ```bash
