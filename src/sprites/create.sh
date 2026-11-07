@@ -6,6 +6,7 @@ set -euo pipefail
 
 # Sprite names are at most 55 characters, and Orca's ORCA_VM_INSTANCE_ID is a UUID, so the
 # name carries a 12-character hash of the instance id rather than the id itself.
+create_started="$(date +%s)"
 ensure_org
 resolve_repo
 recipe_id="$(sanitize_name "${ORCA_RECIPE_ID:-sprites}")"
