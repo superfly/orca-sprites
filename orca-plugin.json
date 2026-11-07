@@ -31,19 +31,34 @@
   },
   "screenshots": [
     {
-      "path": "images/run-on.png",
-      "alt": "Orca's Create worktree dialog with Run on open at Per-Workspace Environment, showing Sprites as the recipe",
-      "caption": "Pick Sprites under Run on"
+      "path": "images/screenshot-1-workspaces.jpg",
+      "alt": "Orca with four workspaces in the sidebar, each running on its own Sprite with its own VM tag and agent status: working, needs you, done",
+      "caption": "One Sprite per workspace"
     },
     {
-      "path": "images/provisioning.jpg",
-      "alt": "Provisioning VM: the recipe log shows a new Sprite being created, Orca being installed and the repository being cloned",
-      "caption": "The recipe builds a new Sprite"
+      "path": "images/screenshot-2-install.jpg",
+      "alt": "Orca plugin directory filtered to Remote/VMs, with the Fly.io Sprites plugin card and its Install & enable button highlighted",
+      "caption": "Install from Orca’s plugin directory"
     },
     {
-      "path": "images/claude-in-sprite.jpg",
-      "alt": "Claude Code in the workspace writes GREETING.md, which reads Hello from orca-demo-sprites-1f3f5676adb1 (Linux 6.1.182-s2)",
-      "caption": "Claude Code runs inside the Sprite"
+      "path": "images/screenshot-3-run-on.jpg",
+      "alt": "Orca Create worktree dialog with Run on set to Sprites, picked from the Per-Workspace Environment menu",
+      "caption": "Run on → Sprites"
+    },
+    {
+      "path": "images/screenshot-4-provisioning.jpg",
+      "alt": "Provisioning steps for a Sprites workspace: create Sprite, install Orca, clone repo, start Orca, then ready in under two minutes",
+      "caption": "Provisioning, step by step"
+    },
+    {
+      "path": "images/screenshot-5-sign-in.jpg",
+      "alt": "Orca Settings with the Host menu set to the workspace VM, the Claude accounts section and Add Account highlighted, and the new account active on that VM",
+      "caption": "Sign Claude in on the Sprite"
+    },
+    {
+      "path": "images/screenshot-6-agent.jpg",
+      "alt": "Claude Code session in a workspace tagged with its Sprite VM, finishing with 87 tests passed",
+      "caption": "Your agent, on its own VM"
     }
   ]
 }
