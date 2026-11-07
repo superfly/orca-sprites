@@ -219,9 +219,9 @@ remote_wait_port='wait_port() {
 # `orca serve --recipe-json` starts a detached server, prints the recipe JSON and returns.
 # A detached server does not come back after the Sprite sleeps, and `--recipe-json` cannot
 # be combined with `--supervise`. So: run it once for the JSON, stop that server by the PIDs
-# in its own lock files, then run `orca serve --supervise` as a service with
-# `--restart always`. The pairing identity lives in ~/.config/orca, so the code from the
-# first run keeps working against the supervised server, and after every wake.
+# in its own lock files, then run `orca serve --supervise` as a service that restarts on
+# wake. The pairing identity lives in ~/.config/orca, so the code from the first run keeps
+# working against the supervised server, and after every wake.
 remote_serve='set -euo pipefail
 umask 077
 '"$remote_secrets"'
@@ -273,8 +273,18 @@ for _ in $(seq 1 100); do [ "$(curl -s -o /dev/null -w "%{http_code}" "http://12
 sprite-env services delete "$SERVICE" >/dev/null 2>&1 || true
 # --http-port makes a request that wakes the Sprite wait until orca serve listens, instead of
 # failing with 502 while it starts.
-sprite-env services create "$SERVICE" --restart always --http-port "$ORCA_PORT" --dir "$HOME" -- /bin/bash -c \
-  ". \"$AGENT_ENV_FILE\"; exec orca-ide serve --supervise $(printf "%q " "${serve_args[@]}")" >/dev/null
+# The command goes in a script because older sprite-env (0.0.x) takes only --cmd and
+# comma-separated --args, not "-- command...".
+serve_script="$HOME/.orca-serve.sh"
+printf "#!/bin/bash\n. %q\nexec orca-ide serve --supervise %s\n" "$AGENT_ENV_FILE" "$(printf "%q " "${serve_args[@]}")" > "$serve_script"
+chmod 700 "$serve_script"
+create_opts=(--cmd "$serve_script" --http-port "$ORCA_PORT" --dir "$HOME")
+# Newer sprite-env needs --restart always to bring the server back after a wake. Older
+# sprite-env has no --restart (it rejects the flag) and streams logs for 5 s unless told not to.
+services_help="$(sprite-env services help 2>&1 || true)"
+case "$services_help" in *--restart*) create_opts+=(--restart always) ;; esac
+case "$services_help" in *--no-stream*) create_opts+=(--no-stream) ;; esac
+sprite-env services create "$SERVICE" "${create_opts[@]}" >/dev/null
 '"$remote_wait_port"'
 wait_port
 cat "$RECIPE_FILE"'
@@ -296,8 +306,15 @@ name_is_free() {
 new_sprite() {
   local name="$1"
   log "creating Sprite $name"
+  local out rc=0
+  out="$(sp create --skip-console --label orca-recipe "$name" 2>&1)" || rc=$?
+  # Restricted tokens cannot set labels; the label only tags the Sprite, so create it without.
+  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'cannot set labels'; then
+    rc=0; out="$(sp create --skip-console "$name" 2>&1)" || rc=$?
+  fi
   # Drop the CLI's boxed "try the API" tip, which Orca shows in its provisioning log.
-  sp create --skip-console --label orca-recipe "$name" 2>&1 | { grep -v -e '^│' -e '^[[:space:]]*$' || true; } >&2
+  printf '%s\n' "$out" | { grep -v -e '^│' -e '^[[:space:]]*$' || true; } >&2
+  return "$rc"
 }
 
 # build_sprite <name>: give a new Sprite a public URL, install Orca, check out the repo.
