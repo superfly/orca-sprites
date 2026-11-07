@@ -16,6 +16,9 @@
 #   SPRITES_NAME_PREFIX    Sprite name prefix (default: orca)
 
 log() { printf '[sprites] %s\n' "$*" >&2; }
+# step <n> <text>: start step n of create's 5 and log it; step_done logs how long it took.
+step() { step_started="$(date +%s)"; log "[$1/5] $2"; }
+step_done() { log "      done ($(( $(date +%s) - step_started ))s)"; }
 die() { printf '[sprites] error: %s\n' "$*" >&2; exit 1; }
 
 command -v sprite >/dev/null 2>&1 || die "the sprite CLI is not on PATH (install: curl -fsSL https://sprites.dev/install.sh | bash, then sprite login)"
@@ -48,7 +51,17 @@ sp() { sprite -o "$org" "$@"; }
 # rexec <sprite> [--env K=V,...] [--file src:dest] -- <cmd...>: run on the Sprite. Returns the
 # remote exit code. --no-port-forward stops the CLI from binding ports the command opens
 # (orca serve opens 8080) on the desktop.
-rexec() { local name="$1"; shift; sp exec -s "$name" --no-stdin --no-port-forward "$@"; }
+# Its stderr drops two kinds of noise Orca would show in the provisioning log: the CLI's
+# "Uploaded ... -> /tmp/orca-secrets-..." line and the Sprite's .bashrc "bind" warnings,
+# which bash prints because `bash -lc` has no line editing. stdout (the recipe JSON) is
+# passed through untouched on fd 3.
+rexec() {
+  local name="$1" rc=0; shift
+  { sp exec -s "$name" --no-stdin --no-port-forward "$@" 2>&1 1>&3 3>&- \
+      | { grep --line-buffered -v -e 'bind: warning: line editing not enabled' -e '^Uploaded .* -> /tmp/orca-secrets-' || true; } >&2
+  } 3>&1 || rc=$?
+  return "$rc"
+}
 
 # ensure_org: use SPRITES_ORG, or the org the sprite CLI uses by default.
 ensure_org() {
@@ -101,7 +114,6 @@ resolve_repo() {
   project_root="${SPRITES_PROJECT_ROOT:-/home/sprite/${base:-project}}"
   case "$project_root" in /*) ;; *) die "SPRITES_PROJECT_ROOT must be an absolute path on the Sprite: $project_root" ;; esac
   for v in repo_url repo_ref project_root orca_version; do check_env_value "$v" "${!v}"; done
-  log "repository $repo_url at $repo_ref, checked out at $project_root"
 }
 
 # Git token for private repositories. Never written into state or JSON.
@@ -134,8 +146,8 @@ sprite_url() {
 destroy_sprite() {
   local name="$1" out rc=0
   out="$(sp destroy --force "$name" 2>&1)" || rc=$?
-  printf '%s\n' "$out" >&2
-  [ "$rc" = 0 ] && return 0
+  [ "$rc" = 0 ] && { log "destroyed Sprite $name"; return 0; }
+  printf '%s\n' "$out" | { grep -v -e '^[[:space:]]*$' -e 'About to destroy' || true; } >&2
   case "$out" in *"sprite not found"*) log "$name is already gone"; return 0 ;; esac
   log "could not destroy $name; destroy it by hand: sprite -o $org destroy --force $name"
   return 1
@@ -179,15 +191,21 @@ fi'
 remote_build='set -euo pipefail
 '"$remote_secrets"'
 export GIT_TERMINAL_PROMPT=0
-echo "installing orca-ide $ORCA_VERSION" >&2
-curl -fsSL -o /tmp/orca.deb "https://github.com/stablyai/orca/releases/download/v$ORCA_VERSION/orca-ide_${ORCA_VERSION}_amd64.deb"
+echo "[sprites] [2/5] Installing Orca $ORCA_VERSION on the Sprite (about a minute)" >&2
+SECONDS=0
+curl -fsSL -o /tmp/orca.deb "https://github.com/stablyai/orca/releases/download/v$ORCA_VERSION/orca-ide_${ORCA_VERSION}_amd64.deb" \
+  || { echo "[sprites] error: could not download orca-ide $ORCA_VERSION. Set SPRITES_ORCA_VERSION to a released Orca version." >&2; false; }
 # Without the update, libgtk-3-0 does not resolve on the Sprite image.
 sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq >/tmp/orca-apt.log 2>&1
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/orca.deb >>/tmp/orca-apt.log 2>&1 || { tail -n 30 /tmp/orca-apt.log >&2; false; }
 rm -f /tmp/orca.deb
+echo "[sprites]       done (${SECONDS}s)" >&2
+echo "[sprites] [3/5] Cloning $ORCA_REPO_URL ($ORCA_REPO_REF) into $ORCA_PROJECT_ROOT" >&2
+SECONDS=0
 '"$remote_askpass"'
 mkdir -p "$(dirname "$ORCA_PROJECT_ROOT")"
-git clone --quiet "$ORCA_REPO_URL" "$ORCA_PROJECT_ROOT"
+git clone --quiet "$ORCA_REPO_URL" "$ORCA_PROJECT_ROOT" \
+  || { echo "[sprites] error: could not clone $ORCA_REPO_URL. The Sprite clones over HTTPS: for a private repository, set GH_TOKEN or GITHUB_TOKEN, or run gh auth login, on this computer." >&2; false; }
 cd "$ORCA_PROJECT_ROOT"
 git fetch --quiet origin "$ORCA_REPO_REF"
 git checkout --quiet -B "$ORCA_REPO_REF" FETCH_HEAD
@@ -198,7 +216,7 @@ node -e "
   let c = {}; try { c = JSON.parse(fs.readFileSync(p, \"utf8\")); } catch {}
   c.hasCompletedOnboarding = true; fs.writeFileSync(p, JSON.stringify(c, null, 2));
 "
-echo "build ok: orca-ide $(dpkg-query -W -f="\${Version}" orca-ide), $(git rev-parse --short HEAD)" >&2'
+echo "[sprites]       done (${SECONDS}s, $(git rev-parse --short HEAD))" >&2'
 
 # Waits until something answers on the serve port.
 remote_wait_port='wait_port() {
@@ -282,29 +300,39 @@ cat "$RECIPE_FILE"'
 
 # name_is_free <name>: fail if a Sprite with that name exists, so cleanup never touches it.
 name_is_free() {
-  [ -z "$(sprite_url "$1")" ] || die "a Sprite named $1 already exists; not touching it"
+  # sprite_url's die only ends its $(...) subshell, so stop here when the lookup fails.
+  local url
+  url="$(sprite_url "$1")" || exit 1
+  [ -z "$url" ] || die "a Sprite named $1 already exists; not touching it"
 }
 
 # new_sprite <name>: create a Sprite.
 new_sprite() {
   local name="$1"
-  log "creating Sprite $name"
+  step 1 "Creating Sprite $name in $org"
   local out rc=0
   out="$(sp create --skip-console --label orca-recipe "$name" 2>&1)" || rc=$?
   # Restricted tokens cannot set labels; the label only tags the Sprite, so create it without.
   if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'cannot set labels'; then
     rc=0; out="$(sp create --skip-console "$name" 2>&1)" || rc=$?
   fi
-  # Drop the CLI's boxed "try the API" tip, which Orca shows in its provisioning log.
-  printf '%s\n' "$out" | { grep -v -e '^│' -e '^[[:space:]]*$' || true; } >&2
-  return "$rc"
+  if [ "$rc" -ne 0 ]; then
+    # Drop the CLI's boxed "try the API" tip; keep its error.
+    printf '%s\n' "$out" | { grep -v -e '^│' -e '^[[:space:]]*$' || true; } >&2
+    case "$out" in
+      *[Uu]nauthori[sz]ed*|*[Ii]nvalid\ token*|*[Nn]ot\ logged\ in*|*[Tt]oken\ *expired*|*[Tt]oken\ has\ expired*)
+        log "error: the sprite CLI is not signed in to $org. Run sprite login, or set SPRITE_TOKEN where Orca starts." ;;
+    esac
+    return "$rc"
+  fi
+  step_done
 }
 
 # build_sprite <name>: give a new Sprite a public URL, install Orca, check out the repo.
 build_sprite() {
   local name="$1"
-  sp config update --url-auth public "$name" >&2
-  log "installing Orca $orca_version and cloning $repo_url@$repo_ref"
+  local out
+  out="$(sp config update --url-auth public "$name" 2>&1)" || { printf '%s\n' "$out" >&2; die "could not give Sprite $name a public URL"; }
   with_secrets "$name" "ORCA_VERSION=$orca_version,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_PROJECT_ROOT=$project_root" \
     bash -lc "$remote_build" >&2
 }
@@ -319,8 +347,11 @@ remote_env() {
 serve_sprite() {
   local name="$1" url
   url="$(sprite_url "$name")"; [ -n "$url" ] || die "no URL for Sprite $name"
+  step 4 "Starting Orca on the Sprite"
   rexec "$name" --env "$(remote_env "$url")" -- bash -lc "$remote_serve"
-  log "to sign Claude in on this Sprite: Settings > Host: this workspace's VM > Accounts > Claude > Add Account"
+  step_done
+  log "[5/5] Ready in $(( $(date +%s) - create_started ))s: $url"
+  log "Next: sign Claude in on this Sprite. Settings > Host: this workspace's VM > Accounts > Claude > Add Account"
 }
 
 # emit_result <recipe-json> <name>: merge userData and print.
