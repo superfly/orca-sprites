@@ -12,13 +12,22 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src = (f) => readFileSync(join(root, 'src/sprites', f), 'utf8')
 const MAX = 32 * 1024 // Orca's limit per recipe command
-const lib = src('lib.sh').replace(/^# shellcheck shell=bash\n/, '')
+// The status script installed on each Sprite travels inside lib.sh as base64, so no quoting
+// in it can break the single-quoted recipe command.
+const statusB64 = Buffer.from(src('orca-sprite-status.sh')).toString('base64')
+const statusLine = /^sprite_status_b64=''.*$/m
+const libSrc = src('lib.sh')
+if (!statusLine.test(libSrc)) throw new Error("lib.sh has no sprite_status_b64='' line")
+const libBase = libSrc.replace(/^# shellcheck shell=bash\n/, '')
+// Only create installs the script, so the other phases keep the empty value and their bytes.
+const libFor = (name) =>
+  name === 'create' ? libBase.replace(statusLine, () => `sprite_status_b64='${statusB64}'`) : libBase
 const include = /^\. "\$\(dirname "\$0"\)\/lib\.sh".*$/m
 
 function phase(name) {
   const body = src(`${name}.sh`)
   if (!include.test(body)) throw new Error(`${name}.sh does not source lib.sh`)
-  const script = body.replace(/^#!.*\n/, '').replace(include, () => lib.trimEnd()).trimEnd()
+  const script = body.replace(/^#!.*\n/, '').replace(include, () => libFor(name).trimEnd()).trimEnd()
   // A single-quoted argument, with each ' written as '\''. Not a heredoc inside $(...):
   // macOS /bin/sh is bash 3.2, which misparses an apostrophe in a heredoc there.
   const command = `bash -c '${script.replace(/'/g, "'\\''")}' sprites-${name}`
