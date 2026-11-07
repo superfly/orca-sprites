@@ -3,7 +3,7 @@
   "manifestVersion": 2,
   "id": "sprites",
   "name": "Fly.io Sprites",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "execution": "declarative",
   "description": "Run each Orca workspace in its own Sprite, a persistent Linux VM from Fly.io. Adds Sprites under Run on > Per-Workspace Environment.",
   "icon": "images/icon.png",
@@ -42,7 +42,7 @@
     },
     {
       "path": "images/screenshot-3-run-on.jpg",
-      "alt": "Orca Create worktree dialog with Run on set to Sprites, picked from the Per-Workspace Environment menu",
+      "alt": "Orca new workspace dialog: Run on is set to Sprites, picked from the Per-Workspace Environment menu, with Claude Code as the agent",
       "caption": "Run on → Sprites"
     },
     {
