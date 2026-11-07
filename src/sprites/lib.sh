@@ -42,7 +42,6 @@ orca_version="${orca_version#v}"
 port=8080
 service_name="orca"
 recipe_file="/home/sprite/.orca-recipe.json"
-agent_env_file="/home/sprite/.orca-agent.env"
 
 sp() { sprite -o "$org" "$@"; }
 
@@ -142,26 +141,24 @@ destroy_sprite() {
   return 1
 }
 
-# with_secrets <sprite> <git|agent> <env K=V,...> <cmd...>: run a command with secrets
-# uploaded as a file, so no token is on a command line on the desktop or the Sprite. The
-# remote fragment sources $SECRETS_FILE and deletes it. `git` sends GH_TOKEN for the clone;
-# `agent` sends CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY for the agent. Each step gets
-# only what it needs.
+# with_secrets <sprite> <env K=V,...> <cmd...>: run a command with GH_TOKEN (for cloning a
+# private repository) uploaded as a file, so no token is on a command line on the desktop or
+# the Sprite. The remote fragment sources $SECRETS_FILE and deletes it. Agent credentials are
+# never sent: people sign their agent in from Orca (Settings > Accounts), on the Sprite.
 with_secrets() {
-  local name="$1" which="$2" envs="$3"; shift 3
+  local name="$1" envs="$2"; shift 2
   local local_file remote_file token="" rc=0
   local_file="$(umask 077; mktemp "${TMPDIR:-/tmp}/orca-sprites.XXXXXX")"
+  # Orca stops a cancelled phase with TERM; do not leave the secrets file behind. The exit
+  # still runs the phase's own EXIT trap (create.sh destroys the half-built Sprite).
+  # shellcheck disable=SC2064
+  trap "rm -f '$local_file'; exit 143" TERM INT HUP
   remote_file="/tmp/orca-secrets-$(date +%s)-$RANDOM$RANDOM.env"
-  [ "$which" != git ] || token="$(git_token)"
-  {
-    [ -z "$token" ] || printf 'export GH_TOKEN=%q\n' "$token"
-    if [ "$which" = agent ]; then
-      [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$CLAUDE_CODE_OAUTH_TOKEN"
-      [ -z "${ANTHROPIC_API_KEY:-}" ] || printf 'export ANTHROPIC_API_KEY=%q\n' "$ANTHROPIC_API_KEY"
-    fi
-  } > "$local_file"
+  token="$(git_token)"
+  [ -z "$token" ] || printf 'export GH_TOKEN=%q\n' "$token" > "$local_file"
   rexec "$name" --file "$local_file:$remote_file" --env "${envs:+$envs,}SECRETS_FILE=$remote_file" -- "$@" || rc=$?
   rm -f "$local_file"
+  trap - TERM INT HUP
   return "$rc"
 }
 
@@ -195,7 +192,7 @@ cd "$ORCA_PROJECT_ROOT"
 git fetch --quiet origin "$ORCA_REPO_REF"
 git checkout --quiet -B "$ORCA_REPO_REF" FETCH_HEAD
 rm -f /tmp/orca-askpass.sh
-# Claude Code: skip the first-run screens. Its credential arrives with the serve step.
+# Claude Code: skip the first-run screens. People sign it in from Orca (Settings > Accounts).
 node -e "
   const fs = require(\"node:fs\"), p = process.env.HOME + \"/.claude.json\";
   let c = {}; try { c = JSON.parse(fs.readFileSync(p, \"utf8\")); } catch {}
@@ -224,28 +221,14 @@ remote_wait_port='wait_port() {
 # working against the supervised server, and after every wake.
 remote_serve='set -euo pipefail
 umask 077
-'"$remote_secrets"'
-: > "$AGENT_ENV_FILE"
-[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || printf "export CLAUDE_CODE_OAUTH_TOKEN=%q\n" "$CLAUDE_CODE_OAUTH_TOKEN" >> "$AGENT_ENV_FILE"
-[ -z "${ANTHROPIC_API_KEY:-}" ] || printf "export ANTHROPIC_API_KEY=%q\n" "$ANTHROPIC_API_KEY" >> "$AGENT_ENV_FILE"
-# Claude Code: trust the project folder, and pre-approve an API key so the first run does not
-# stop at "Do you want to use this API key?". Only the last 20 characters of the key are stored,
-# which is what Claude Code itself records.
+# Claude Code: trust the project folder, so the first run does not stop at the trust prompt.
 node -e "
   const fs = require(\"node:fs\"), p = process.env.HOME + \"/.claude.json\";
   let c = {}; try { c = JSON.parse(fs.readFileSync(p, \"utf8\")); } catch {}
   c.projects = c.projects || {};
   c.projects[process.env.ORCA_PROJECT_ROOT] = { ...(c.projects[process.env.ORCA_PROJECT_ROOT] || {}), hasTrustDialogAccepted: true };
-  const k = process.env.ANTHROPIC_API_KEY;
-  if (k) {
-    c.customApiKeyResponses = c.customApiKeyResponses || { approved: [], rejected: [] };
-    const tail = k.slice(-20);
-    if (!c.customApiKeyResponses.approved.includes(tail)) c.customApiKeyResponses.approved.push(tail);
-  }
   fs.writeFileSync(p, JSON.stringify(c, null, 2), { mode: 0o600 });
 "
-grep -q "orca-agent.env" "$HOME/.bashrc" 2>/dev/null || printf "%s\n" "[ -f \"$AGENT_ENV_FILE\" ] && . \"$AGENT_ENV_FILE\"" >> "$HOME/.bashrc"
-unset GH_TOKEN
 serve_args=(--port "$ORCA_PORT" --project-root "$ORCA_PROJECT_ROOT" --pairing-address "$ORCA_PAIRING_ADDRESS")
 orca-ide serve "${serve_args[@]}" --recipe-json > "$RECIPE_FILE.tmp" 2>/tmp/orca-serve.log || { cat /tmp/orca-serve.log >&2; false; }
 node -e "const r = JSON.parse(require(\"node:fs\").readFileSync(process.argv[1], \"utf8\")); if (!r.pairingCode) throw new Error(\"no pairingCode\")" "$RECIPE_FILE.tmp"
@@ -276,7 +259,7 @@ sprite-env services delete "$SERVICE" >/dev/null 2>&1 || true
 # The command goes in a script because older sprite-env (0.0.x) takes only --cmd and
 # comma-separated --args, not "-- command...".
 serve_script="$HOME/.orca-serve.sh"
-printf "#!/bin/bash\n. %q\nexec orca-ide serve --supervise %s\n" "$AGENT_ENV_FILE" "$(printf "%q " "${serve_args[@]}")" > "$serve_script"
+printf "#!/bin/bash\nexec orca-ide serve --supervise %s\n" "$(printf "%q " "${serve_args[@]}")" > "$serve_script"
 chmod 700 "$serve_script"
 create_opts=(--cmd "$serve_script" --http-port "$ORCA_PORT" --dir "$HOME")
 # Newer sprite-env needs --restart always to bring the server back after a wake. Older
@@ -322,23 +305,22 @@ build_sprite() {
   local name="$1"
   sp config update --url-auth public "$name" >&2
   log "installing Orca $orca_version and cloning $repo_url@$repo_ref"
-  with_secrets "$name" git "ORCA_VERSION=$orca_version,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_PROJECT_ROOT=$project_root" \
+  with_secrets "$name" "ORCA_VERSION=$orca_version,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_PROJECT_ROOT=$project_root" \
     bash -lc "$remote_build" >&2
 }
 
 remote_env() {
   local url="$1"
-  printf 'ORCA_PORT=%s,ORCA_PROJECT_ROOT=%s,ORCA_REPO_REF=%s,ORCA_PAIRING_ADDRESS=%s,SERVICE=%s,RECIPE_FILE=%s,AGENT_ENV_FILE=%s' \
-    "$port" "$project_root" "$repo_ref" "${url/https:\/\//wss://}" "$service_name" "$recipe_file" "$agent_env_file"
+  printf 'ORCA_PORT=%s,ORCA_PROJECT_ROOT=%s,ORCA_REPO_REF=%s,ORCA_PAIRING_ADDRESS=%s,SERVICE=%s,RECIPE_FILE=%s' \
+    "$port" "$project_root" "$repo_ref" "${url/https:\/\//wss://}" "$service_name" "$recipe_file"
 }
 
 # serve_sprite <name>: start orca serve on a built Sprite and print its recipe JSON.
-# Agent credentials go to a 0600 file on the Sprite, never to state or userData.
 serve_sprite() {
   local name="$1" url
   url="$(sprite_url "$name")"; [ -n "$url" ] || die "no URL for Sprite $name"
-  [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ] || log "warning: neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set; claude will ask to log in"
-  with_secrets "$name" agent "$(remote_env "$url")" bash -lc "$remote_serve"
+  rexec "$name" --env "$(remote_env "$url")" -- bash -lc "$remote_serve"
+  log "to sign Claude in on this Sprite: Settings > Host: this workspace's VM > Accounts > Claude > Add Account"
 }
 
 # emit_result <recipe-json> <name>: merge userData and print.

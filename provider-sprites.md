@@ -16,7 +16,7 @@ mode does not apply.
 | Orca guide step | Sprites |
 |---|---|
 | Base snapshot, boot each workspace from it | Not used. A checkpoint belongs to one Sprite, and there is no create-from-checkpoint. `create` builds each Sprite: it installs the Orca `.deb` and clones the repo. Each workspace has its own Sprite, so no two workspaces share a pairing identity. |
-| Agent-auth snapshot | Not needed. `create` takes the agent credential from the desktop environment (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`) and writes it to a `0600` file on the Sprite. Secrets travel as an uploaded file (`sprite exec --file`), never as command-line arguments, and are never in state or `userData`. |
+| Agent-auth snapshot | Not needed, and the recipe sends no agent credential. People sign in per workspace with Orca's own accounts: Settings → Host (the workspace's VM) → Accounts → Add Account, which runs the agent's login on the Sprite and finishes in the desktop browser. A desktop login is never copied: Claude's refresh token rotates, so two copies sign each other out (tested). The only secret the recipe sends is the git token for the clone, as an uploaded file (`sprite exec --file`), never as a command-line argument, and never in state or `userData`. |
 | Published port | Each Sprite has one URL, `https://<name>-<slug>.sprites.app` (the slug is fixed per org; read the URL from `sprite --json list`), that routes to port 8080. Set its auth to `public`, and the pairing code is the credential. See "Why the URL is public". |
 | Keep `orca serve` running | A Sprite service running `orca serve --supervise`, with `--restart always` and `--http-port 8080`. The Sprite sleeps when idle and starts services again on the next request. Because the port is declared, the request that wakes the Sprite waits until the server listens instead of failing with 502. |
 | `suspend` / `resume` | `suspend` stops the service, so no connection keeps the Sprite awake and it sleeps. `resume` starts the service and prints the saved recipe JSON. The URL and pairing identity do not change. |
@@ -86,10 +86,9 @@ organization. Orca sets `ORCA_REPO_URL`, `ORCA_REPO_REF` and `ORCA_VERSION` only
 lifecycle phases take the Sprite name and organization from `userData` in the payload.
 
 Prerequisites on the desktop: the `sprite` CLI logged in to the org (`sprite login`, or
-`SPRITE_TOKEN` in the environment), `node`, `git`, the agent credential in the environment
-Orca starts from, and for a private repo `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`. On
-macOS, an Orca started from the Dock does not see shell exports: start Orca from a terminal,
-or set the variables with `launchctl setenv`.
+`SPRITE_TOKEN` in the environment), `node`, `git`, and for a private repo `GH_TOKEN`,
+`GITHUB_TOKEN` or `gh auth token`. An Orca started from the Dock or a desktop launcher does
+not see shell exports: start Orca from a terminal, or set the variables with `launchctl setenv`.
 
 The git token is used only to clone and is deleted afterwards, so `git fetch` and `git push`
 from inside the workspace need their own credentials (for example `gh auth login` in the
@@ -107,12 +106,13 @@ sprite -o "$org" config update --url-auth public "$name"
 sprite -o "$org" exec -s "$name" --no-stdin --no-port-forward --file "$tmp:/tmp/orca-secrets-….env" \
   --env "ORCA_VERSION=…,ORCA_REPO_URL=…,SECRETS_FILE=/tmp/orca-secrets-….env" -- bash -lc "$remote_build"
 url="$(sprite -o "$org" --json list --prefix "$name" | …)"   # https://<name>-<slug>.sprites.app
-# remote (secrets uploaded the same way): write ~/.orca-agent.env (0600); then
+# remote: mark the project folder trusted for Claude Code; then
 orca-ide serve --port 8080 --project-root "$PROJECT_ROOT" \
   --pairing-address "wss://<name>-<slug>.sprites.app" --recipe-json > ~/.orca-recipe.json
 # remote: stop that detached server by its lock-file PIDs, wait for port 8080 to be free, then
-sprite-env services create orca --restart always --http-port 8080 --dir "$HOME" -- /bin/bash -c \
-  ". ~/.orca-agent.env; exec orca-ide serve --supervise --port 8080 --project-root … --pairing-address …"
+# ~/.orca-serve.sh: exec orca-ide serve --supervise --port 8080 --project-root … --pairing-address …
+sprite-env services create orca --cmd ~/.orca-serve.sh --http-port 8080 --dir "$HOME" \
+  [--restart always]   # only where sprite-env supports it; older sprite-env restarts on wake anyway
 # remote: wait for port 8080, print ~/.orca-recipe.json
 # desktop: merge userData { provider: "sprites", resourceId, org } and print
 ```
@@ -140,9 +140,8 @@ Pass the full `wss://` URL to `--pairing-address`. A host name alone gives
   successful destroy.
 - **Sprite names are at most 55 characters.** Orca's `ORCA_VM_INSTANCE_ID` is a UUID, so the
   name carries a 12-character hash of it instead.
-- **Claude Code first-run prompts.** The serve step marks the project folder as trusted and,
-  when `ANTHROPIC_API_KEY` is used, records the key's last 20 characters as approved, as
-  Claude Code itself does. With Orca's default Yolo mode, Claude Code still asks once to
+- **Claude Code first-run prompts.** The build step skips onboarding and the serve step marks
+  the project folder as trusted. With Orca's default Yolo mode, Claude Code still asks once to
   accept `--dangerously-skip-permissions`; the recipe leaves that choice to the user.
 - `sprite exec` returns the remote exit code.
 - `sprite exec --env` takes `KEY=value,KEY2=value2`, so values must not contain commas. The
