@@ -113,7 +113,10 @@ orca-ide serve --port 8080 --project-root "$PROJECT_ROOT" \
 # remote: stop that detached server by its lock-file PIDs, wait for port 8080 to be free, then
 sprite-env services create orca --restart always --http-port 8080 --dir "$HOME" -- /bin/bash -c \
   ". ~/.orca-agent.env; exec orca-ide serve --supervise --port 8080 --project-root … --pairing-address …"
-# remote: wait for port 8080, print ~/.orca-recipe.json
+# remote: wait for port 8080; install ~/.local/bin/orca-sprite-status (src/sprites/orca-sprite-status.sh,
+#   embedded by the build), write ~/.orca-sprite.env (Sprite name, URL, repo, the Host-menu VM id) and
+#   hook it into ~/.zshrc and ~/.bashrc: Orca opens `zsh -l` on the Sprite
+# remote: print ~/.orca-recipe.json
 # desktop: merge userData { provider: "sprites", resourceId, org } and print
 ```
 

@@ -43,6 +43,8 @@ port=8080
 service_name="orca"
 recipe_file="/home/sprite/.orca-recipe.json"
 agent_env_file="/home/sprite/.orca-agent.env"
+# src/sprites/orca-sprite-status.sh, base64: scripts/build.mjs fills this in.
+sprite_status_b64=''
 
 sp() { sprite -o "$org" "$@"; }
 
@@ -287,6 +289,19 @@ case "$services_help" in *--no-stream*) create_opts+=(--no-stream) ;; esac
 sprite-env services create "$SERVICE" "${create_opts[@]}" >/dev/null
 '"$remote_wait_port"'
 wait_port
+# The workspace status banner: orca-sprite-status, the facts it shows, and a hook that runs it
+# in every new interactive terminal. Orca opens zsh on the Sprite, so the hook goes in .zshrc
+# (and .bashrc for bash). The VM id is the end of the runtime id Orca saw when it paired, which
+# names this workspace in Settings > Host; the server gets a new one each restart, so keep it now.
+mkdir -p "$HOME/.local/bin"
+install -m 755 "$STATUS_FILE" "$HOME/.local/bin/orca-sprite-status" && sudo rm -f "$STATUS_FILE"
+runtime_id="$(timeout 30 orca-ide status --json 2>/dev/null | jq -r ".result.runtime.runtimeId // empty" || true)"
+printf "ORCA_SPRITE_NAME=%q\nORCA_SPRITE_URL=%q\nORCA_REPO_NAME=%q\nORCA_VM_ID=%q\nORCA_PROJECT_ROOT=%q\n" \
+  "$ORCA_SPRITE_NAME" "$ORCA_SPRITE_URL" "$ORCA_REPO_NAME" "${runtime_id: -8}" "$ORCA_PROJECT_ROOT" > "$HOME/.orca-sprite.env"
+for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+  grep -q "orca-sprite-status --banner" "$rc" 2>/dev/null \
+    || printf "%s\n" "case \$- in *i*) [ -x \"\$HOME/.local/bin/orca-sprite-status\" ] && \"\$HOME/.local/bin/orca-sprite-status\" --banner ;; esac" >> "$rc"
+done
 cat "$RECIPE_FILE"'
 
 # Starts the stopped service again and prints the saved recipe JSON.
@@ -338,7 +353,15 @@ serve_sprite() {
   local name="$1" url
   url="$(sprite_url "$name")"; [ -n "$url" ] || die "no URL for Sprite $name"
   [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ] || log "warning: neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set; claude will ask to log in"
-  with_secrets "$name" agent "$(remote_env "$url")" bash -lc "$remote_serve"
+  local status_local status_remote repo_name
+  repo_name="$(basename "${ORCA_REPO_PATH:-$repo_url}" .git)"
+  status_local="$(mktemp "${TMPDIR:-/tmp}/orca-sprite-status.XXXXXX")"
+  status_remote="/tmp/orca-sprite-status-$(date +%s)-$RANDOM"
+  node -e 'process.stdout.write(Buffer.from(process.argv[1], "base64"))' "$sprite_status_b64" > "$status_local"
+  rexec "$name" --file "$status_local:$status_remote" -- true >&2 || { rm -f "$status_local"; die "could not upload the status script to $name"; }
+  rm -f "$status_local"
+  with_secrets "$name" agent "$(remote_env "$url"),ORCA_SPRITE_NAME=$name,ORCA_SPRITE_URL=$url,ORCA_REPO_NAME=$repo_name,STATUS_FILE=$status_remote" \
+    bash -lc "$remote_serve"
 }
 
 # emit_result <recipe-json> <name>: merge userData and print.

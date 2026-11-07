@@ -40,6 +40,11 @@ Sprite.
    `node` and `git` live); start Orca from a terminal, or use `launchctl setenv`.
 5. Create a workspace and pick **Run on → Per-Workspace Environment → Sprites**.
 
+Each new terminal in a Sprite workspace starts with a short status: whether Claude and GitHub are
+signed in on that Sprite and, if not, what to do, including the exact entry to pick in
+**Settings → Host**. Once both are set up it shrinks to one line. Run `orca-sprite-status` in
+the workspace to check again.
+
 The repository must have an `origin` remote that the Sprite can clone over HTTPS. For a
 private repository, set `GH_TOKEN` or `GITHUB_TOKEN`, or be logged in with `gh`. The token is
 used for the clone and is not left on the Sprite.
