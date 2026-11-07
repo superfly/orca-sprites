@@ -34,11 +34,20 @@ Sprite.
    `https://github.com/superfly/orca-sprites`, then **Continue** and **Install**. Orca asks
    you to confirm that you trust the publisher. Then turn the plugin on.
 3. Turn on **Settings → Experimental → Cloud VM**.
-4. Give the agent a credential in the environment Orca starts from:
-   `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. On macOS a
-   Dock-launched Orca does not see shell exports or your shell's `PATH` (where `sprite`,
-   `node` and `git` live); start Orca from a terminal, or use `launchctl setenv`.
+4. Start Orca from a terminal if `sprite`, `node` and `git` are not in standard locations: an
+   Orca started from the Dock or a desktop launcher does not see your shell's `PATH`.
 5. Create a workspace and pick **Run on → Per-Workspace Environment → Sprites**.
+6. Sign Claude in on that workspace's Sprite, once per workspace:
+   1. Open **Settings** and, in the **Host** menu at the top, choose the workspace's VM (for
+      example `my-repo VM e33a460e`).
+   2. Under **Accounts → Claude**, click **Add Account**. Sign in in your browser, then paste
+      the code it shows back into Orca.
+   3. Select the new account, in that list or in the status bar's account menu. New Claude
+      terminals in the workspace use it.
+
+   The login stays on that Sprite and uses your Claude plan. It is separate from your login
+   on this computer, so neither signs the other out. Do not copy a Claude login from one
+   machine to another: its refresh token rotates, and the two copies sign each other out.
 
 The repository must have an `origin` remote that the Sprite can clone over HTTPS. For a
 private repository, set `GH_TOKEN` or `GITHUB_TOKEN`, or be logged in with `gh`. The token is
@@ -70,6 +79,10 @@ headers, so the pairing code is the credential: keep it private. See
 - **"the sprite CLI is not on PATH"** or **"node is not on PATH"**: Orca does not see your
   shell's `PATH`. Start Orca from a terminal.
 - **"no Sprites org"**: run `sprite login`, or set `SPRITES_ORG`.
+- **An account added in Orca does not seem to take effect.** Workspaces created with plugin
+  version 0.1.5 or earlier still get the old `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`
+  from `~/.orca-agent.env` on the Sprite. Delete and recreate the workspace, or remove that
+  file on the Sprite and restart the workspace.
 
 ## Develop
 
