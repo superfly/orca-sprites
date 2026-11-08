@@ -130,7 +130,10 @@ The Electron binary in the unpacked package cannot start without the desktop lib
 anything that launches Electron on the server cannot work on a fast-installed Sprite. Tested
 and working: pairing, adding the repo, creating a workspace from a local branch, workspace
 terminals, Claude Code, the in-terminal `orca` CLI and `orca account list`, suspend and resume
-with the same pairing code. Not tested: the per-workspace browser and computer use.
+with the same pairing code. **Not available: the per-workspace browser.** On a remote server
+Orca runs it as the Electron app under Xvfb (`orca-ide --serve … --ozone-platform=x11`), which
+needs the skipped packages; every browser command returns `browser_unavailable`. It works on a
+`full` install. Computer use was not tested.
 
 Measured 2026-11-08: Orca 1.4.253, `octocat/Hello-World`, 5 pairs of runs alternating which
 install went first, one run at a time, same org, desktop side on another Sprite. "To
