@@ -19,7 +19,7 @@ An [Orca](https://github.com/stablyai/orca) plugin that runs each workspace in i
 When you create a workspace on Sprites, the recipe:
 
 1. creates a Sprite and gives it a public URL,
-2. installs Orca on it and clones your repository,
+2. installs Orca on it and copies your repository from this computer,
 3. starts `orca serve` as a Sprite service, so it comes back after the Sprite sleeps,
 4. returns the pairing code, and Orca connects over the Sprite's URL.
 
@@ -49,9 +49,12 @@ Sprite.
    on this computer, so neither signs the other out. Do not copy a Claude login from one
    machine to another: its refresh token rotates, and the two copies sign each other out.
 
-The repository must have an `origin` remote that the Sprite can clone over HTTPS. For a
-private repository, set `GH_TOKEN` or `GITHUB_TOKEN`, or be logged in with `gh`. The token is
-used for the clone and is not left on the Sprite.
+The Sprite gets your repository from this computer, not from GitHub: your branches (including
+commits you have not pushed), `origin`'s branches and your tags, checked out on the branch you
+have checked out here. It needs no git token, so private repositories and repositories with no
+remote work too. Uncommitted changes stay on this computer. Commits on the Sprite use your
+`user.name` and `user.email`. `origin` points at the same repository over HTTPS: to push from
+the Sprite, run `gh auth login` in a workspace terminal.
 
 ## Settings
 
@@ -60,8 +63,6 @@ Everything has a default. To change one, set the variable in the environment Orc
 | Variable | Default |
 |---|---|
 | `SPRITES_ORG` | The `sprite` CLI's default organization |
-| `SPRITES_REPO_URL` | The repository's `origin` remote |
-| `SPRITES_REPO_REF` | `origin`'s default branch |
 | `SPRITES_PROJECT_ROOT` | `/home/sprite/<repository name>` |
 | `SPRITES_ORCA_VERSION` | The version of your Orca CLI (`orca-ide --version`), else 1.4.246 |
 | `SPRITES_NAME_PREFIX` | `orca` |

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end check of the Sprites recipe against a real Orca client.
-#   dev/lifecycle-test.sh <git repo with an origin remote>
+#   dev/lifecycle-test.sh <git repo>
 # Runs the built recipe (recipes/sprites.json) through dev/run-phase.sh, as Orca would.
 # create, pair with `orca-ide status`; let the Sprite sleep on its own and pair again (wake);
 # suspend, let it sleep, resume, pair again with the OLD code; destroy. Prints JSON.

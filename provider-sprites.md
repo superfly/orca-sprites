@@ -15,8 +15,8 @@ mode does not apply.
 
 | Orca guide step | Sprites |
 |---|---|
-| Base snapshot, boot each workspace from it | Not used. A checkpoint belongs to one Sprite, and there is no create-from-checkpoint. `create` builds each Sprite: it installs the Orca `.deb` and clones the repo. Each workspace has its own Sprite, so no two workspaces share a pairing identity. |
-| Agent-auth snapshot | Not needed, and the recipe sends no agent credential. People sign in per workspace with Orca's own accounts: Settings → Host (the workspace's VM) → Accounts → Add Account, which runs the agent's login on the Sprite and finishes in the desktop browser. A desktop login is never copied: Claude's refresh token rotates, so two copies sign each other out (tested). The only secret the recipe sends is the git token for the clone, as an uploaded file (`sprite exec --file`), never as a command-line argument, and never in state or `userData`. |
+| Base snapshot, boot each workspace from it | Not used. A checkpoint belongs to one Sprite, and there is no create-from-checkpoint. `create` builds each Sprite: it installs the Orca `.deb` and checks out the repo from a bundle made on the desktop. Each workspace has its own Sprite, so no two workspaces share a pairing identity. |
+| Agent-auth snapshot | Not needed, and the recipe sends no agent credential. People sign in per workspace with Orca's own accounts: Settings → Host (the workspace's VM) → Accounts → Add Account, which runs the agent's login on the Sprite and finishes in the desktop browser. A desktop login is never copied: Claude's refresh token rotates, so two copies sign each other out (tested). The recipe sends no secrets at all: the repository arrives as a git bundle from the desktop, so no git token is needed. |
 | Published port | Each Sprite has one URL, `https://<name>-<slug>.sprites.app` (the slug is fixed per org; read the URL from `sprite --json list`), that routes to port 8080. Set its auth to `public`, and the pairing code is the credential. See "Why the URL is public". |
 | Keep `orca serve` running | A Sprite service running `orca serve --supervise`, with `--restart always` and `--http-port 8080`. The Sprite sleeps when idle and starts services again on the next request. Because the port is declared, the request that wakes the Sprite waits until the server listens instead of failing with 502. |
 | `suspend` / `resume` | `suspend` stops the service, so no connection keeps the Sprite awake and it sleeps. `resume` starts the service and prints the saved recipe JSON. The URL and pairing identity do not change. |
@@ -79,20 +79,30 @@ inside `$(...)` is not used: bash 3.2 misparses an apostrophe in one.
 | `src/sprites/destroy.sh` | Destroys the Sprite. It succeeds if the Sprite is already gone. |
 
 There is no state file. `create` takes its settings from what the desktop already knows: the
-repository's `origin` remote and its default branch (local `origin/HEAD`, else
-`git ls-remote --symref`), the desktop Orca CLI's version, and the `sprite` CLI's default
-organization. Orca sets `ORCA_REPO_URL`, `ORCA_REPO_REF` and `ORCA_VERSION` only for
+local repository (its checked-out branch, its `origin` remote and `origin/HEAD`), the desktop
+Orca CLI's version, and the `sprite` CLI's default organization. Orca sets `ORCA_REPO_URL`, `ORCA_REPO_REF` and `ORCA_VERSION` only for
 `provisioned-root` recipes, or not at all, so the recipe does not rely on them. `SPRITES_*` variables override each one; see the README. The
 lifecycle phases take the Sprite name and organization from `userData` in the payload.
 
 Prerequisites on the desktop: the `sprite` CLI logged in to the org (`sprite login`, or
-`SPRITE_TOKEN` in the environment), `node`, `git`, and for a private repo `GH_TOKEN`,
-`GITHUB_TOKEN` or `gh auth token`. An Orca started from the Dock or a desktop launcher does
+`SPRITE_TOKEN` in the environment), `node` and `git`. An Orca started from the Dock or a desktop launcher does
 not see shell exports: start Orca from a terminal, or set the variables with `launchctl setenv`.
 
-The git token is used only to clone and is deleted afterwards, so `git fetch` and `git push`
-from inside the workspace need their own credentials (for example `gh auth login` in the
-workspace terminal). Orca's Vercel Sandbox example has the same gap.
+### The checkout comes from the desktop
+
+Orca does not tell a non-`provisioned-root` recipe which commit or branch the workspace is for;
+it creates the workspace's worktree itself, inside the checkout at `projectRoot`, from the base
+ref picked in the dialog. So that checkout must hold every ref the desktop could offer as a
+base. `create` bundles the local repo's branches, `origin`'s branches, tags and `HEAD` (by full ref name: `--branches --tags` silently drops a branch and a tag that share a name) and
+the Sprite fetches it into a fresh repository with the same ref names (`refs/heads/*`,
+`refs/remotes/origin/*`, `refs/tags/*`), sets `origin` to the remote's HTTPS URL and
+`origin/HEAD` as it is locally, and checks out the local branch. Tested: a workspace based on
+a local branch with an unpushed commit has that commit; a repository with no remote works.
+
+No git token reaches the Sprite. `git fetch` and `git push` in the workspace need their own
+credentials (for example `gh auth login` in a workspace terminal). The local `user.name` and
+`user.email` are copied to the Sprite's global git config. Uncommitted changes are not sent;
+the provisioning log says so when there are some.
 
 ## `create`
 
@@ -101,10 +111,12 @@ workspace terminal). Orca's Vercel Sandbox example has the same gap.
 sprite -o "$org" create --skip-console --label orca-recipe "$name"
 trap cleanup EXIT   # armed after create: destroys the Sprite if anything below fails
 sprite -o "$org" config update --url-auth public "$name"
-# secrets go in a 0600 temp file, uploaded with --file; the remote side sources and deletes it
-# remote: apt-get update, install the orca-ide .deb, clone with GIT_ASKPASS
-sprite -o "$org" exec -s "$name" --no-stdin --no-port-forward --file "$tmp:/tmp/orca-secrets-….env" \
-  --env "ORCA_VERSION=…,ORCA_REPO_URL=…,SECRETS_FILE=/tmp/orca-secrets-….env" -- bash -lc "$remote_build"
+git for-each-ref refs/heads refs/remotes/origin refs/tags + HEAD | git bundle create "$tmp/repo.bundle" --stdin
+# the bundle goes over stdin: --file uploads of 32 MB and more fail with HTTP 413.
+# The git identity (user.name, user.email) is a small --file upload.
+# remote: save the bundle, apt-get update, install the orca-ide .deb, git init + fetch the bundle
+sprite -o "$org" exec -s "$name" --stdin --no-port-forward --file "$tmp/identity.env:/tmp/orca-identity-….env" \
+  --env "ORCA_VERSION=…,ORCA_REPO_URL=…,ORCA_REPO_REF=<local branch>,…" -- bash -lc "$remote_build" < "$tmp/repo.bundle"
 url="$(sprite -o "$org" --json list --prefix "$name" | …)"   # https://<name>-<slug>.sprites.app
 # remote: mark the project folder trusted for Claude Code; then
 orca-ide serve --port 8080 --project-root "$PROJECT_ROOT" \
@@ -155,7 +167,7 @@ benchmarks.
 
 | Step | Workspace A | Workspace B |
 |---|---|---|
-| `create` (new Sprite, install, clone, serve) | 81.5 s | 73.6 s |
+| `create` (new Sprite, install, clone, serve; measured before the bundle checkout) | 81.5 s | 73.6 s |
 | First pair from the client | 8.7 s | 7.8 s |
 | **`create` to paired client** | **91.0 s** | **81.6 s** |
 | Idle until the Sprite sleeps (`warm`) | 27.4 s | 27.0 s |
