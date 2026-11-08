@@ -13,6 +13,8 @@
 #   SPRITES_PROJECT_ROOT   checkout path on the Sprite (default: /home/sprite/<repo name>)
 #   SPRITES_ORCA_VERSION   orca-ide version to install (default: the desktop Orca CLI's version)
 #   SPRITES_NAME_PREFIX    Sprite name prefix (default: orca)
+#   SPRITES_INSTALL        fast (default): unpack the Orca .deb and run orca serve on orcad, with
+#                          no desktop packages; full: apt-get install the .deb
 
 log() { printf '[sprites] %s\n' "$*" >&2; }
 # step <n> <text>: start step n of create's 5 and log it; step_done logs how long it took.
@@ -40,6 +42,8 @@ detect_orca_version() {
 orca_version="${SPRITES_ORCA_VERSION:-${ORCA_VERSION:-}}"
 [ -n "$orca_version" ] || orca_version="$(detect_orca_version)"
 orca_version="${orca_version#v}"
+install_mode="${SPRITES_INSTALL:-fast}"
+case "$install_mode" in fast|full) ;; *) die "SPRITES_INSTALL must be fast or full, not $install_mode" ;; esac
 # The Sprite URL routes to port 8080.
 port=8080
 service_name="orca"
@@ -220,15 +224,46 @@ head -c "$BUNDLE_SIZE" > "$BUNDLE_FILE"
 [ "$(wc -c < "$BUNDLE_FILE")" = "$BUNDLE_SIZE" ] \
   || { echo "[sprites] error: the repository arrived incomplete ($(wc -c < "$BUNDLE_FILE") of $BUNDLE_SIZE bytes); try again" >&2; false; }
 bundle_secs=$SECONDS
-echo "[sprites] [2/5] Installing Orca $ORCA_VERSION on the Sprite (about a minute)" >&2
+echo "[sprites] [2/5] Installing Orca $ORCA_VERSION on the Sprite" >&2
 SECONDS=0
 curl -fsSL -o /tmp/orca.deb "https://github.com/stablyai/orca/releases/download/v$ORCA_VERSION/orca-ide_${ORCA_VERSION}_amd64.deb" \
   || { echo "[sprites] error: could not download orca-ide $ORCA_VERSION. Set SPRITES_ORCA_VERSION to a released Orca version." >&2; false; }
-# Without the update, libgtk-3-0 does not resolve on the Sprite image.
-sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq >/tmp/orca-apt.log 2>&1
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/orca.deb >>/tmp/orca-apt.log 2>&1 || { tail -n 30 /tmp/orca-apt.log >&2; false; }
+installed=""
+if [ "${ORCA_INSTALL:-fast}" = fast ]; then
+  # orca serve runs on orcad, Orca'"'"'s own Node server, which the .deb carries. Unpack the .deb
+  # instead of installing it, and run Orca'"'"'s CLI on the Sprite'"'"'s Node: the desktop app and its
+  # GTK and X11 dependencies are never needed. The CLI finds orcad through the app executable
+  # and process.resourcesPath, which only exist in Electron, so a small Node wrapper provides
+  # both. A preflight asks the CLI'"'"'s own selection step whether orcad can serve here, which also
+  # downloads orcad'"'"'s pinned Node. Anything unexpected falls back to the full install.
+  # Node is copied into the app directory: the Sprite'"'"'s node is a mise shim, and the version
+  # directory it resolves to can be pruned later.
+  app="$HOME/.orca-app"; res="$app/opt/Orca/resources"; cfg="${XDG_CONFIG_HOME:-$HOME/.config}/orca"
+  rm -rf "$app"; mkdir -p "$app" "$HOME/.local/bin"; (umask 077; mkdir -p "$cfg")
+  if cp "$(node -p process.execPath 2>>/tmp/orca-fast.log)" "$app/node.bin" 2>>/tmp/orca-fast.log \
+     && dpkg-deb -x /tmp/orca.deb "$app" 2>>/tmp/orca-fast.log; then
+    printf "process.resourcesPath = %s;\n" "$(node -p "JSON.stringify(process.argv[1])" "$res")" > "$app/preload.js"
+    printf "#!/bin/sh\nexec %q -r %q \"\$@\"\n" "$app/node.bin" "$app/preload.js" > "$app/node"
+    printf "#!/bin/sh\nORCA_APP_EXECUTABLE=%q exec %q %q \"\$@\"\n" "$app/node" "$app/node.bin" "$res/app.asar.unpacked/out/cli/index.js" > "$HOME/.local/bin/orca-ide"
+    chmod +x "$app/node" "$HOME/.local/bin/orca-ide"
+    selection="$("$app/node" "$res/app.asar.unpacked/out/main/orcad/orcad-local-serve-selection-entry.js" \
+      --user-data "$cfg" --app-root "$res/app.asar.unpacked" 2>>/tmp/orca-fast.log || true)"
+    case "$selection" in *"ORCA_SERVE_RUNTIME {\"kind\":\"orcad\""*) installed=fast ;; *) printf "%s\n" "$selection" >> /tmp/orca-fast.log ;; esac
+  fi
+  if [ -z "$installed" ]; then
+    echo "[sprites]       orcad could not run from the unpacked package; installing the full package instead" >&2
+    tail -n 5 /tmp/orca-fast.log >&2 || true
+    rm -rf "$app" "$HOME/.local/bin/orca-ide" "$cfg"
+  fi
+fi
+if [ -z "$installed" ]; then
+  # Without the update, libgtk-3-0 does not resolve on the Sprite image.
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq >/tmp/orca-apt.log 2>&1
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/orca.deb >>/tmp/orca-apt.log 2>&1 || { tail -n 30 /tmp/orca-apt.log >&2; false; }
+  installed=full
+fi
 rm -f /tmp/orca.deb
-echo "[sprites]       done (${SECONDS}s)" >&2
+echo "[sprites]       done (${SECONDS}s, $installed install)" >&2
 echo "[sprites] [3/5] Checking out $ORCA_REPO_REF at $BUNDLE_NOTE into $ORCA_PROJECT_ROOT (sent in ${bundle_secs}s)" >&2
 if [ "${BUNDLE_DIRTY:-0}" = 1 ]; then echo "[sprites]       uncommitted changes stay on this computer; commit them to have them on the Sprite" >&2; fi
 SECONDS=0
@@ -318,7 +353,7 @@ sprite-env services delete "$SERVICE" >/dev/null 2>&1 || true
 # The command goes in a script because older sprite-env (0.0.x) takes only --cmd and
 # comma-separated --args, not "-- command...".
 serve_script="$HOME/.orca-serve.sh"
-printf "#!/bin/bash\nexec orca-ide serve --supervise %s\n" "$(printf "%q " "${serve_args[@]}")" > "$serve_script"
+printf "#!/bin/bash\nexec %q serve --supervise %s\n" "$(command -v orca-ide)" "$(printf "%q " "${serve_args[@]}")" > "$serve_script"
 chmod 700 "$serve_script"
 create_opts=(--cmd "$serve_script" --http-port "$ORCA_PORT" --dir "$HOME")
 # Newer sprite-env needs --restart always to bring the server back after a wake. Older
@@ -374,7 +409,7 @@ build_sprite() {
   local name="$1"
   local out
   out="$(sp config update --url-auth public "$name" 2>&1)" || { printf '%s\n' "$out" >&2; die "could not give Sprite $name a public URL"; }
-  with_checkout "$name" "ORCA_VERSION=$orca_version,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_ORIGIN_HEAD=$origin_head,ORCA_PROJECT_ROOT=$project_root" \
+  with_checkout "$name" "ORCA_VERSION=$orca_version,ORCA_INSTALL=$install_mode,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_ORIGIN_HEAD=$origin_head,ORCA_PROJECT_ROOT=$project_root" \
     bash -lc "$remote_build" >&2
 }
 
