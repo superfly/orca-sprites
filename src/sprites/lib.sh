@@ -6,11 +6,10 @@
 #
 # Orca runs each phase in the repository's root directory and sets ORCA_* variables
 # (ORCA_VM_INSTANCE_ID, ORCA_RECIPE_ID, ORCA_REPO_PATH, ...). For a recipe like this one it
-# leaves ORCA_REPO_URL, ORCA_REPO_REF and ORCA_VERSION empty. Optional
-# overrides, read from the environment Orca was started from:
+# leaves ORCA_REPO_URL, ORCA_REPO_REF and ORCA_VERSION empty. The Sprite's checkout comes from
+# the local repository, sent as a git bundle, so it needs no git token and no pushed branch.
+# Optional overrides, read from the environment Orca was started from:
 #   SPRITES_ORG            Sprites organization (default: the sprite CLI's default org)
-#   SPRITES_REPO_URL       repository to clone (default: the repo's origin remote)
-#   SPRITES_REPO_REF       branch or tag to check out (default: origin's default branch)
 #   SPRITES_PROJECT_ROOT   checkout path on the Sprite (default: /home/sprite/<repo name>)
 #   SPRITES_ORCA_VERSION   orca-ide version to install (default: the desktop Orca CLI's version)
 #   SPRITES_NAME_PREFIX    Sprite name prefix (default: orca)
@@ -25,7 +24,7 @@ command -v sprite >/dev/null 2>&1 || die "the sprite CLI is not on PATH (install
 command -v node >/dev/null 2>&1 || die "node is not on PATH; the recipe uses it to read and write JSON"
 
 org="${SPRITES_ORG:-}"
-repo_url="" repo_ref="" project_root=""
+repo_dir="" repo_url="" repo_ref="" origin_head="" project_root=""
 name_prefix="${SPRITES_NAME_PREFIX:-orca}"
 # Orca does not pass its version to recipes, so ask the desktop's Orca CLI, then fall back
 # to the version this recipe was tested with.
@@ -52,13 +51,20 @@ sp() { sprite -o "$org" "$@"; }
 # remote exit code. --no-port-forward stops the CLI from binding ports the command opens
 # (orca serve opens 8080) on the desktop.
 # Its stderr drops two kinds of noise Orca would show in the provisioning log: the CLI's
-# "Uploaded ... -> /tmp/orca-secrets-..." line and the Sprite's .bashrc "bind" warnings,
+# "Uploaded ... -> /tmp/orca-..." lines and the Sprite's .bashrc "bind" warnings,
 # which bash prints because `bash -lc` has no line editing. stdout (the recipe JSON) is
 # passed through untouched on fd 3.
+# With rexec_stdin=1 it forwards stdin (for the repository bundle) instead of --no-stdin.
 rexec() {
-  local name="$1" rc=0; shift
-  { sp exec -s "$name" --no-stdin --no-port-forward "$@" 2>&1 1>&3 3>&- \
-      | { grep --line-buffered -v -e 'bind: warning: line editing not enabled' -e '^Uploaded .* -> /tmp/orca-secrets-' || true; } >&2
+  local name="$1" rc=0 stdin_flag="--no-stdin"; shift
+  if [ "${rexec_stdin:-0}" = 1 ]; then
+    # Newer CLIs warn unless stdin forwarding is explicit; older ones have no --stdin.
+    stdin_flag=""; sp exec --help 2>&1 | grep -q -e '^ *--stdin ' && stdin_flag="--stdin"
+  fi
+  # shellcheck disable=SC2086
+  { sp exec -s "$name" $stdin_flag --no-port-forward "$@" 2>&1 1>&3 3>&- \
+      | { grep --line-buffered -v -e 'bind: warning: line editing not enabled' -e '^Uploaded .* -> /tmp/orca-' \
+            -e 'stdin is being forwarded implicitly' -e 'Pass --stdin to confirm' || true; } >&2
   } 3>&1 || rc=$?
   return "$rc"
 }
@@ -82,47 +88,68 @@ check_env_value() {
   case "$2" in *,*) die "$1 must not contain a comma (sprite exec --env splits on commas): $2" ;; esac
 }
 
-# resolve_repo: repo_url, repo_ref and project_root for the create phase.
+# resolve_repo: repo_dir, repo_ref (the local branch, or a commit if HEAD is detached),
+# repo_url (origin as HTTPS, may be empty) and project_root for the create phase.
 resolve_repo() {
-  local repo_dir="${ORCA_REPO_PATH:-$PWD}" ref
-  repo_url="${SPRITES_REPO_URL:-${ORCA_REPO_URL:-}}"
-  [ -n "$repo_url" ] || repo_url="$(git -C "$repo_dir" remote get-url origin 2>/dev/null || true)"
-  [ -n "$repo_url" ] || die "no repository URL: the repo has no 'origin' remote; add one or set SPRITES_REPO_URL"
-  # Never carry credentials from the remote URL onto the Sprite; the git token goes separately.
+  repo_dir="${ORCA_REPO_PATH:-$PWD}"
+  git -C "$repo_dir" rev-parse --verify --quiet HEAD >/dev/null \
+    || die "$repo_dir is not a git repository with at least one commit"
+  # Not --short: it disambiguates (a tag named like the branch gives heads/<branch>).
+  repo_ref="$(git -C "$repo_dir" symbolic-ref --quiet HEAD 2>/dev/null || true)"
+  repo_ref="${repo_ref#refs/heads/}"
+  [ -n "$repo_ref" ] || repo_ref="$(git -C "$repo_dir" rev-parse HEAD)"
+  # A bundle from a shallow clone has no prerequisites check and fails on the Sprite; a partial
+  # clone would fetch every missing object from the promisor remote while bundling.
+  [ "$(git -C "$repo_dir" rev-parse --is-shallow-repository 2>/dev/null)" != true ] \
+    || die "$repo_dir is a shallow clone, which cannot be sent to the Sprite; run git fetch --unshallow first"
+  [ -z "$(git -C "$repo_dir" config --get extensions.partialClone 2>/dev/null || true)" ] \
+    || die "$repo_dir is a partial clone (--filter), which cannot be sent to the Sprite; clone it in full"
+  # origin becomes the Sprite checkout's origin, so pushing works after gh auth login there.
+  # HTTPS, because the Sprite has no SSH keys. Never carry credentials from the URL.
+  repo_url="$(git -C "$repo_dir" remote get-url origin 2>/dev/null || true)"
   repo_url="$(printf '%s' "$repo_url" | sed -E 's#^(https?://)[^/@]+@#\1#')"
   case "$repo_url" in
     https://*|http://*) ;;
     git@*:*) repo_url="${repo_url#git@}"; repo_url="https://${repo_url/://}" ;;
-    *) die "the Sprite clones over HTTPS, so the origin remote must be a hosted URL, not $repo_url (set SPRITES_REPO_URL)" ;;
+    ssh://git@*) repo_url="https://${repo_url#ssh://git@}" ;;
+    *) repo_url="" ;;
   esac
-  ref="${SPRITES_REPO_REF:-${ORCA_REPO_REF:-}}"
-  ref="${ref#refs/heads/}"; ref="${ref#refs/remotes/origin/}"; ref="${ref#origin/}"
-  # Orca sets ORCA_REPO_REF only for provisioned-root recipes, so this usually falls through
-  # to origin's default branch: the local origin/HEAD, then asking the remote.
-  if [ -z "$ref" ]; then
-    ref="$(git -C "$repo_dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
-    ref="${ref#origin/}"
-  fi
-  # Ask the HTTPS URL the Sprite will clone first: it works without SSH keys.
-  local remote
-  for remote in "$repo_url" origin; do
-    [ -z "$ref" ] || break
-    ref="$(GIT_TERMINAL_PROMPT=0 git -C "$repo_dir" ls-remote --symref "$remote" HEAD 2>/dev/null | sed -n 's#^ref: refs/heads/\([^[:space:]]*\)[[:space:]]*HEAD$#\1#p' | head -n 1 || true)"
-  done
-  repo_ref="${ref:-main}"
+  origin_head="$(git -C "$repo_dir" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)"
+  origin_head="${origin_head#refs/remotes/}"
   local base="${repo_url%/}"; base="${base##*/}"; base="${base%.git}"
+  [ -n "$base" ] || base="$(basename "$(git -C "$repo_dir" rev-parse --show-toplevel)")"
+  base="$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '-')"
   project_root="${SPRITES_PROJECT_ROOT:-/home/sprite/${base:-project}}"
   case "$project_root" in /*) ;; *) die "SPRITES_PROJECT_ROOT must be an absolute path on the Sprite: $project_root" ;; esac
-  for v in repo_url repo_ref project_root orca_version; do check_env_value "$v" "${!v}"; done
+  for v in repo_url repo_ref origin_head project_root orca_version; do check_env_value "$v" "${!v}"; done
 }
 
-# Git token for private repositories. Never written into state or JSON.
-git_token() {
-  if [ -n "${GH_TOKEN:-}" ]; then printf '%s' "$GH_TOKEN"
-  elif [ -n "${GITHUB_TOKEN:-}" ]; then printf '%s' "$GITHUB_TOKEN"
-  elif command -v gh >/dev/null 2>&1; then gh auth token 2>/dev/null || true
-  fi
+# make_bundle <file>: bundle the local branches, origin's branches and tags, so the Sprite
+# gets the same history Orca sees here, unpushed commits included. Uncommitted changes stay
+# on this computer.
+# Full ref names on stdin, not --branches/--tags: bundle create silently drops a branch and a
+# tag that share a name. origin/HEAD is a symref and is set on the Sprite separately.
+make_bundle() {
+  local out rc=0
+  out="$( { git -C "$repo_dir" for-each-ref --format='%(refname)' refs/heads refs/remotes/origin refs/tags \
+              | grep -v '^refs/remotes/origin/HEAD$'; echo HEAD; } \
+          | git -C "$repo_dir" bundle create "$1" --stdin 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { printf '%s\n' "$out" >&2; log "error: could not bundle $repo_dir"; }
+  return "$rc"
 }
+
+# git_identity_file <file>: the local git user.name and user.email as shell exports, so
+# commits on the Sprite carry the same author. A file, because names can contain commas.
+git_identity_file() {
+  local n e
+  n="$(git -C "$repo_dir" config user.name 2>/dev/null || true)"
+  e="$(git -C "$repo_dir" config user.email 2>/dev/null || true)"
+  { [ -z "$n" ] || printf 'export GIT_USER_NAME=%q\n' "$n"
+    [ -z "$e" ] || printf 'export GIT_USER_EMAIL=%q\n' "$e"; } > "$1"
+}
+
+# human_size <bytes>
+human_size() { awk -v b="$1" 'BEGIN { split("B KB MB GB", u); i = 1; while (b >= 1024 && i < 4) { b /= 1024; i++ } printf (i == 1 ? "%d %s" : "%.1f %s"), b, u[i] }'; }
 
 # Sprite names: lowercase letters, digits and hyphens.
 sanitize_name() {
@@ -153,23 +180,30 @@ destroy_sprite() {
   return 1
 }
 
-# with_secrets <sprite> <env K=V,...> <cmd...>: run a command with GH_TOKEN (for cloning a
-# private repository) uploaded as a file, so no token is on a command line on the desktop or
-# the Sprite. The remote fragment sources $SECRETS_FILE and deletes it. Agent credentials are
-# never sent: people sign their agent in from Orca (Settings > Accounts), on the Sprite.
-with_secrets() {
+# with_checkout <sprite> <env K=V,...> <cmd...>: run a command with the repository bundle on
+# its stdin and the git identity uploaded at $IDENTITY_FILE. The bundle goes over stdin
+# because `sprite exec --file` rejects uploads of 32 MB and more (HTTP 413). No git token is
+# sent.
+with_checkout() {
   local name="$1" envs="$2"; shift 2
-  local local_file remote_file token="" rc=0
-  local_file="$(umask 077; mktemp "${TMPDIR:-/tmp}/orca-sprites.XXXXXX")"
-  # Orca stops a cancelled phase with TERM; do not leave the secrets file behind. The exit
-  # still runs the phase's own EXIT trap (create.sh destroys the half-built Sprite).
+  local tmp rc=0 stamp size note dirty=0
+  tmp="$(umask 077; mktemp -d "${TMPDIR:-/tmp}/orca-sprites.XXXXXX")"
+  # Orca stops a cancelled phase with TERM; do not leave the bundle behind. The exit still
+  # runs the phase's own EXIT trap (create.sh destroys the half-built Sprite).
   # shellcheck disable=SC2064
-  trap "rm -f '$local_file'; exit 143" TERM INT HUP
-  remote_file="/tmp/orca-secrets-$(date +%s)-$RANDOM$RANDOM.env"
-  token="$(git_token)"
-  [ -z "$token" ] || printf 'export GH_TOKEN=%q\n' "$token" > "$local_file"
-  rexec "$name" --file "$local_file:$remote_file" --env "${envs:+$envs,}SECRETS_FILE=$remote_file" -- "$@" || rc=$?
-  rm -f "$local_file"
+  trap "rm -rf '$tmp'; exit 143" TERM INT HUP
+  if ! make_bundle "$tmp/repo.bundle" || ! git_identity_file "$tmp/identity.env"; then
+    rm -rf "$tmp"; trap - TERM INT HUP; return 1
+  fi
+  size="$(wc -c < "$tmp/repo.bundle" | tr -d ' ')"
+  # Shown by the remote step 3, so the log stays in order.
+  note="$(git -C "$repo_dir" rev-parse --short HEAD) from this computer ($(human_size "$size"))"
+  [ -z "$(git -C "$repo_dir" status --porcelain --untracked-files=no 2>/dev/null)" ] || dirty=1
+  stamp="$(date +%s)-$RANDOM$RANDOM"
+  rexec_stdin=1 rexec "$name" --file "$tmp/identity.env:/tmp/orca-identity-$stamp.env" \
+    --env "${envs:+$envs,}BUNDLE_FILE=/tmp/orca-repo-$stamp.bundle,IDENTITY_FILE=/tmp/orca-identity-$stamp.env,BUNDLE_SIZE=$size,BUNDLE_NOTE=$note,BUNDLE_DIRTY=$dirty" \
+    -- "$@" < "$tmp/repo.bundle" || rc=$?
+  rm -rf "$tmp"
   trap - TERM INT HUP
   return "$rc"
 }
@@ -178,19 +212,14 @@ with_secrets() {
 # shell with `set -e`, `exit` runs ~/.bash_logout, whose clear_console fails without a TTY
 # and turns every exit status into 1. They end on the status of their last command.
 
-# Sources and deletes the uploaded secrets file. The upload lands root-owned and 0644, so it
-# is removed with sudo straight away.
-remote_secrets='if [ -n "${SECRETS_FILE:-}" ] && [ -f "$SECRETS_FILE" ]; then . "$SECRETS_FILE"; sudo rm -f "$SECRETS_FILE"; fi'
-
-remote_askpass='if [ -n "${GH_TOKEN:-}" ]; then
-  printf "%s\n" "#!/usr/bin/env bash" "case \"\$1\" in *Username*) echo x-access-token;; *Password*) echo \"\$GH_TOKEN\";; esac" > /tmp/orca-askpass.sh
-  chmod 700 /tmp/orca-askpass.sh; export GIT_ASKPASS=/tmp/orca-askpass.sh
-fi'
-
 # Installs Orca and checks out the repository.
 remote_build='set -euo pipefail
-'"$remote_secrets"'
-export GIT_TERMINAL_PROMPT=0
+# Read the repository bundle from stdin first, so nothing later (apt, dpkg) can consume it.
+SECONDS=0
+head -c "$BUNDLE_SIZE" > "$BUNDLE_FILE"
+[ "$(wc -c < "$BUNDLE_FILE")" = "$BUNDLE_SIZE" ] \
+  || { echo "[sprites] error: the repository arrived incomplete ($(wc -c < "$BUNDLE_FILE") of $BUNDLE_SIZE bytes); try again" >&2; false; }
+bundle_secs=$SECONDS
 echo "[sprites] [2/5] Installing Orca $ORCA_VERSION on the Sprite (about a minute)" >&2
 SECONDS=0
 curl -fsSL -o /tmp/orca.deb "https://github.com/stablyai/orca/releases/download/v$ORCA_VERSION/orca-ide_${ORCA_VERSION}_amd64.deb" \
@@ -200,16 +229,28 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq >/tmp/orca-apt.log 2>&1
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/orca.deb >>/tmp/orca-apt.log 2>&1 || { tail -n 30 /tmp/orca-apt.log >&2; false; }
 rm -f /tmp/orca.deb
 echo "[sprites]       done (${SECONDS}s)" >&2
-echo "[sprites] [3/5] Cloning $ORCA_REPO_URL ($ORCA_REPO_REF) into $ORCA_PROJECT_ROOT" >&2
+echo "[sprites] [3/5] Checking out $ORCA_REPO_REF at $BUNDLE_NOTE into $ORCA_PROJECT_ROOT (sent in ${bundle_secs}s)" >&2
+if [ "${BUNDLE_DIRTY:-0}" = 1 ]; then echo "[sprites]       uncommitted changes stay on this computer; commit them to have them on the Sprite" >&2; fi
 SECONDS=0
-'"$remote_askpass"'
-mkdir -p "$(dirname "$ORCA_PROJECT_ROOT")"
-git clone --quiet "$ORCA_REPO_URL" "$ORCA_PROJECT_ROOT" \
-  || { echo "[sprites] error: could not clone $ORCA_REPO_URL. The Sprite clones over HTTPS: for a private repository, set GH_TOKEN or GITHUB_TOKEN, or run gh auth login, on this computer." >&2; false; }
+# The identity upload lands root-owned; read it, then remove it with sudo.
+if [ -s "$IDENTITY_FILE" ]; then . "$IDENTITY_FILE"; fi
+git init --quiet "$ORCA_PROJECT_ROOT"
 cd "$ORCA_PROJECT_ROOT"
-git fetch --quiet origin "$ORCA_REPO_REF"
-git checkout --quiet -B "$ORCA_REPO_REF" FETCH_HEAD
-rm -f /tmp/orca-askpass.sh
+git fetch --quiet --update-head-ok "$BUNDLE_FILE" "refs/heads/*:refs/heads/*" "refs/remotes/origin/*:refs/remotes/origin/*" "refs/tags/*:refs/tags/*"
+rm -f "$BUNDLE_FILE"; sudo rm -f "$IDENTITY_FILE"
+if git show-ref --verify --quiet "refs/heads/$ORCA_REPO_REF"; then
+  git switch --quiet "$ORCA_REPO_REF"
+else
+  git checkout --quiet --detach "$ORCA_REPO_REF"
+fi
+if [ -n "${ORCA_REPO_URL:-}" ]; then
+  git remote add origin "$ORCA_REPO_URL"
+  if [ -n "${ORCA_ORIGIN_HEAD:-}" ]; then git symbolic-ref refs/remotes/origin/HEAD "refs/remotes/$ORCA_ORIGIN_HEAD"; fi
+  # Track origin like the local branch does, when origin has a branch of that name.
+  if git show-ref --verify --quiet "refs/remotes/origin/$ORCA_REPO_REF"; then git branch --quiet --set-upstream-to "origin/$ORCA_REPO_REF"; fi
+fi
+if [ -n "${GIT_USER_NAME:-}" ]; then git config --global user.name "$GIT_USER_NAME"; fi
+if [ -n "${GIT_USER_EMAIL:-}" ]; then git config --global user.email "$GIT_USER_EMAIL"; fi
 # Claude Code: skip the first-run screens. People sign it in from Orca (Settings > Accounts).
 node -e "
   const fs = require(\"node:fs\"), p = process.env.HOME + \"/.claude.json\";
@@ -333,7 +374,7 @@ build_sprite() {
   local name="$1"
   local out
   out="$(sp config update --url-auth public "$name" 2>&1)" || { printf '%s\n' "$out" >&2; die "could not give Sprite $name a public URL"; }
-  with_secrets "$name" "ORCA_VERSION=$orca_version,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_PROJECT_ROOT=$project_root" \
+  with_checkout "$name" "ORCA_VERSION=$orca_version,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_ORIGIN_HEAD=$origin_head,ORCA_PROJECT_ROOT=$project_root" \
     bash -lc "$remote_build" >&2
 }
 
