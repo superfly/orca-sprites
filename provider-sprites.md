@@ -104,6 +104,53 @@ credentials (for example `gh auth login` in a workspace terminal). The local `us
 `user.email` are copied to the Sprite's global git config. Uncommitted changes are not sent;
 the provisioning log says so when there are some.
 
+## Fast install: `orca serve` without the desktop app
+
+`orca serve` runs on orcad, Orca's own Node server, not on Electron. The `.deb` carries orcad
+(`resources/orcad-template/`, with per-platform targets) next to the desktop app, but
+installing the `.deb` with `apt-get` pulls in 90 to 230 GTK, X11 and Xvfb packages and takes
+about a minute. By default the recipe skips that (`SPRITES_BROWSER=1` installs the whole
+package, for the browser; see below):
+
+1. `dpkg-deb -x` unpacks the `.deb` into `~/.orca-app` (about 8 s). Nothing is installed.
+2. The Sprite's `node` binary is copied to `~/.orca-app/node.bin`. (`node` on the Sprite is a
+   mise shim, and the version directory it resolves to can be pruned later.)
+3. Orca's CLI (`out/cli/index.js`) runs on that Node. To start orcad, the CLI runs a selection
+   step with the *app executable*, normally the Electron binary in Node mode, and orcad's
+   files are found through `process.resourcesPath`, which only Electron sets. So
+   `~/.orca-app/node` is a two-line wrapper that runs Node with a preload setting
+   `process.resourcesPath`, and `~/.local/bin/orca-ide` runs the CLI with
+   `ORCA_APP_EXECUTABLE` pointing at it.
+4. A preflight runs Orca's own selection step
+   (`out/main/orcad/orcad-local-serve-selection-entry.js`). It must answer
+   `ORCA_SERVE_RUNTIME {"kind":"orcad",...}`; it also downloads and verifies orcad's pinned
+   Node. If it answers anything else, or any step fails, the fast files are removed and the
+   full install runs instead. The provisioning log says which install was used.
+
+The Electron binary in the unpacked package cannot start without the desktop libraries, so
+anything that launches Electron on the server cannot work on a fast-installed Sprite. Tested
+and working: pairing, adding the repo, creating a workspace from a local branch, workspace
+terminals, Claude Code, the in-terminal `orca` CLI and `orca account list`, suspend and resume
+with the same pairing code. **Not available: the per-workspace browser.** On a remote server
+Orca runs it as the Electron app under Xvfb (`orca-ide --serve … --ozone-platform=x11`), which
+needs the skipped packages; every browser command returns `browser_unavailable`. It works on a
+full install, so it is opt-in: `SPRITES_BROWSER=1`. Computer use was not tested.
+
+Measured 2026-11-08: Orca 1.4.253, `octocat/Hello-World`, 5 pairs of runs alternating which
+install went first, one run at a time, same org, desktop side on another Sprite. "To
+terminal" is `create` plus pairing, adding the repo, creating a workspace and getting
+output from a command in a workspace terminal. Every run succeeded.
+
+| | Full install, `SPRITES_BROWSER=1` (median, range) | Default (median, range) | Saved (mean) |
+|---|---|---|---|
+| Install step | 62 s (57–67) | 22 s (20–28) | 40 s |
+| Start-Orca step | 37 s (31–40) | 11 s (10–13) | 26 s |
+| **`create`** | **103.6 s (97.8–109.8)** | **35.5 s (34.2–45.0)** | **64.9 s (63%)** |
+| **To working terminal** | **129.4 s (124.9–136.1)** | **60.7 s (59.3–70.1)** | **65.9 s (51%)** |
+
+The slowest default run was 52.7 s quicker than the quickest full-install run. The pairing and
+workspace steps after `create` take the same time on both (about 25 s).
+
 ## `create`
 
 ```bash
@@ -137,7 +184,8 @@ Pass the full `wss://` URL to `--pairing-address`. A host name alone gives
 - **`exit` in `bash -lc` with `set -e` always returns 1 on the Sprite image.** The login shell
   runs `~/.bash_logout`, whose `clear_console` fails without a TTY. Remote fragments end on the
   status of their last command and use `return` inside functions.
-- **`apt-get update` before installing the `.deb`.** Without it, `libgtk-3-0` does not resolve.
+- **`apt-get update` before installing the `.deb`** (full install only). Without it,
+  `libgtk-3-0` does not resolve.
 - **Do not stop processes with `pkill -f`.** The pattern can match the exec shell itself. Stop
   by PID, or use `sprite-env services stop|delete`.
 - **Declare the service port.** Without `--http-port`, the request that wakes a Sprite gets a 502
