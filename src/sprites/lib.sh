@@ -13,8 +13,9 @@
 #   SPRITES_PROJECT_ROOT   checkout path on the Sprite (default: /home/sprite/<repo name>)
 #   SPRITES_ORCA_VERSION   orca-ide version to install (default: the desktop Orca CLI's version)
 #   SPRITES_NAME_PREFIX    Sprite name prefix (default: orca)
-#   SPRITES_INSTALL        fast (default): unpack the Orca .deb and run orca serve on orcad, with
-#                          no desktop packages; full: apt-get install the .deb
+#   SPRITES_BROWSER        1: install Orca's whole desktop package, which the per-workspace
+#                          browser needs (about a minute slower). Default: unpack the package
+#                          and run orca serve on orcad alone, without the browser
 
 log() { printf '[sprites] %s\n' "$*" >&2; }
 # step <n> <text>: start step n of create's 5 and log it; step_done logs how long it took.
@@ -42,8 +43,11 @@ detect_orca_version() {
 orca_version="${SPRITES_ORCA_VERSION:-${ORCA_VERSION:-}}"
 [ -n "$orca_version" ] || orca_version="$(detect_orca_version)"
 orca_version="${orca_version#v}"
-install_mode="${SPRITES_INSTALL:-fast}"
-case "$install_mode" in fast|full) ;; *) die "SPRITES_INSTALL must be fast or full, not $install_mode" ;; esac
+case "${SPRITES_BROWSER:-0}" in
+  1|true|yes) install_mode=full ;;
+  0|false|no|"") install_mode=fast ;;
+  *) die "SPRITES_BROWSER must be 1 or 0, not $SPRITES_BROWSER" ;;
+esac
 # The Sprite URL routes to port 8080.
 port=8080
 service_name="orca"
@@ -263,7 +267,11 @@ if [ -z "$installed" ]; then
   installed=full
 fi
 rm -f /tmp/orca.deb
-echo "[sprites]       done (${SECONDS}s, $installed install)" >&2
+if [ "$installed" = full ]; then
+  echo "[sprites]       done (${SECONDS}s, full install: the per-workspace browser works)" >&2
+else
+  echo "[sprites]       done (${SECONDS}s, without the desktop app: no per-workspace browser; set SPRITES_BROWSER=1 for it)" >&2
+fi
 echo "[sprites] [3/5] Checking out $ORCA_REPO_REF at $BUNDLE_NOTE into $ORCA_PROJECT_ROOT (sent in ${bundle_secs}s)" >&2
 if [ "${BUNDLE_DIRTY:-0}" = 1 ]; then echo "[sprites]       uncommitted changes stay on this computer; commit them to have them on the Sprite" >&2; fi
 SECONDS=0

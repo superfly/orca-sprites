@@ -109,7 +109,8 @@ the provisioning log says so when there are some.
 `orca serve` runs on orcad, Orca's own Node server, not on Electron. The `.deb` carries orcad
 (`resources/orcad-template/`, with per-platform targets) next to the desktop app, but
 installing the `.deb` with `apt-get` pulls in 90 to 230 GTK, X11 and Xvfb packages and takes
-about a minute. The default `SPRITES_INSTALL=fast` skips that:
+about a minute. By default the recipe skips that (`SPRITES_BROWSER=1` installs the whole
+package, for the browser; see below):
 
 1. `dpkg-deb -x` unpacks the `.deb` into `~/.orca-app` (about 8 s). Nothing is installed.
 2. The Sprite's `node` binary is copied to `~/.orca-app/node.bin`. (`node` on the Sprite is a
@@ -133,21 +134,21 @@ terminals, Claude Code, the in-terminal `orca` CLI and `orca account list`, susp
 with the same pairing code. **Not available: the per-workspace browser.** On a remote server
 Orca runs it as the Electron app under Xvfb (`orca-ide --serve … --ozone-platform=x11`), which
 needs the skipped packages; every browser command returns `browser_unavailable`. It works on a
-`full` install. Computer use was not tested.
+full install, so it is opt-in: `SPRITES_BROWSER=1`. Computer use was not tested.
 
 Measured 2026-11-08: Orca 1.4.253, `octocat/Hello-World`, 5 pairs of runs alternating which
 install went first, one run at a time, same org, desktop side on another Sprite. "To
 terminal" is `create` plus pairing, adding the repo, creating a workspace and getting
 output from a command in a workspace terminal. Every run succeeded.
 
-| | `full` (median, range) | `fast` (median, range) | Saved (mean) |
+| | Full install, `SPRITES_BROWSER=1` (median, range) | Default (median, range) | Saved (mean) |
 |---|---|---|---|
 | Install step | 62 s (57–67) | 22 s (20–28) | 40 s |
 | Start-Orca step | 37 s (31–40) | 11 s (10–13) | 26 s |
 | **`create`** | **103.6 s (97.8–109.8)** | **35.5 s (34.2–45.0)** | **64.9 s (63%)** |
 | **To working terminal** | **129.4 s (124.9–136.1)** | **60.7 s (59.3–70.1)** | **65.9 s (51%)** |
 
-The slowest `fast` run was 52.7 s quicker than the quickest `full` run. The pairing and
+The slowest default run was 52.7 s quicker than the quickest full-install run. The pairing and
 workspace steps after `create` take the same time on both (about 25 s).
 
 ## `create`

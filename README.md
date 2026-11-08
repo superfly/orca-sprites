@@ -66,7 +66,7 @@ Everything has a default. To change one, set the variable in the environment Orc
 | `SPRITES_PROJECT_ROOT` | `/home/sprite/<repository name>` |
 | `SPRITES_ORCA_VERSION` | The version of your Orca CLI (`orca-ide --version`), else 1.4.246 |
 | `SPRITES_NAME_PREFIX` | `orca` |
-| `SPRITES_INSTALL` | `fast`: unpack Orca's package and run `orca serve` without the desktop app. `full`: install the whole desktop package, as before 0.4.0. `fast` falls back to `full` by itself if the server cannot run. |
+| `SPRITES_BROWSER` | Off. Set to `1` for Orca's per-workspace browser: the Sprite then installs Orca's whole desktop app, which takes about a minute longer. |
 
 Each workspace's Sprite has a **public** URL. The Orca client cannot send Sprites auth
 headers, so the pairing code is the credential: keep it private. See
