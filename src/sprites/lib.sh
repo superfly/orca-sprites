@@ -9,7 +9,8 @@
 # leaves ORCA_REPO_URL, ORCA_REPO_REF and ORCA_VERSION empty. The Sprite's checkout comes from
 # the local repository, sent as a git bundle, so it needs no git token and no pushed branch.
 # Optional overrides, read from the environment Orca was started from:
-#   SPRITES_ORG            Sprites organization (default: the sprite CLI's default org)
+#   SPRITES_ORG            Sprites organization (default: the organization set in Orca's
+#                          Settings for this plugin, then the sprite CLI's default org)
 #   SPRITES_PROJECT_ROOT   checkout path on the Sprite (default: /home/sprite/<repo name>)
 #   SPRITES_ORCA_VERSION   orca-ide version to install (default: the desktop Orca CLI's version)
 #   SPRITES_NAME_PREFIX    Sprite name prefix (default: orca)
@@ -26,7 +27,8 @@ die() { printf '[sprites] error: %s\n' "$*" >&2; exit 1; }
 command -v sprite >/dev/null 2>&1 || die "the sprite CLI is not on PATH (install: curl -fsSL https://sprites.dev/install.sh | bash, then sprite login)"
 command -v node >/dev/null 2>&1 || die "node is not on PATH; the recipe uses it to read and write JSON"
 
-org="${SPRITES_ORG:-}"
+org="${SPRITES_ORG:-}" org_source=""
+[ -z "$org" ] || org_source="SPRITES_ORG"
 repo_dir="" repo_url="" repo_ref="" origin_head="" project_root=""
 name_prefix="${SPRITES_NAME_PREFIX:-orca}"
 # Orca does not pass its version to recipes, so ask the desktop's Orca CLI, then fall back
@@ -77,11 +79,45 @@ rexec() {
   return "$rc"
 }
 
-# ensure_org: use SPRITES_ORG, or the org the sprite CLI uses by default.
+# settings_org: the organization set in Orca's Settings for this plugin, or nothing. A recipe
+# can't call settings.get, so this reads the file Orca keeps the values in:
+# <Orca userData>/plugins-data/<publisher>.sprites/settings.json, a JSON object. userData is
+# ~/Library/Application Support/orca on macOS and ~/.config/orca (or $XDG_CONFIG_HOME/orca)
+# on Linux. The publisher is superfly for a catalog or Git install and local for a folder
+# install. The recipe can't tell which install is running, so it reads superfly first, and
+# says so when the two files name different organizations.
+settings_org() {
+  local base f v found="" found_file=""
+  if [ "$(uname -s)" = Darwin ]; then base="$HOME/Library/Application Support/orca"
+  else base="${XDG_CONFIG_HOME:-$HOME/.config}/orca"; fi
+  for f in "$base/plugins-data/superfly.sprites/settings.json" "$base/plugins-data/local.sprites/settings.json"; do
+    [ -f "$f" ] || continue
+    v="$(node -e '
+      try {
+        const s = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+        if (typeof s.org === "string") process.stdout.write(s.org.trim());
+      } catch {}' "$f" 2>/dev/null || true)"
+    [ -n "$v" ] || continue
+    if [ -z "$found" ]; then found="$v" found_file="$f"
+    elif [ "$v" != "$found" ]; then log "note: using organization $found from $found_file, not $v from $f"; fi
+  done
+  printf '%s' "$found"
+}
+
+# ensure_org: use SPRITES_ORG, then the organization set in Orca's Settings, then the org the
+# sprite CLI uses by default. org_source says which, for the provisioning log.
 ensure_org() {
   [ -n "$org" ] && return 0
+  org="$(settings_org)"
+  if [ -n "$org" ]; then
+    case "$org" in
+      *[!a-z0-9-]*|-*) die "the Sprites organization set in Orca's Settings, \"$org\", is not an organization name: those are lowercase letters, digits and hyphens, as sprite org list shows them. Fix it in Settings > Plugins > Fly.io Sprites" ;;
+    esac
+    org_source="Orca Settings"; return 0
+  fi
   org="$(sprite --json list 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write(JSON.parse(d).org?.name||"")}catch{}})')"
-  [ -n "$org" ] || die "no Sprites org: run 'sprite login', or set SPRITES_ORG in the environment Orca starts from"
+  [ -n "$org" ] || die "no Sprites org: run 'sprite login', set the organization in Settings > Plugins > Fly.io Sprites, or set SPRITES_ORG in the environment Orca starts from"
+  org_source="the sprite CLI's default"
 }
 
 # use_payload_org <payload>: lifecycle phases act in the org the Sprite was created in.
@@ -393,7 +429,7 @@ name_is_free() {
 # new_sprite <name>: create a Sprite.
 new_sprite() {
   local name="$1"
-  step 1 "Creating Sprite $name in $org"
+  step 1 "Creating Sprite $name in $org${org_source:+ (from $org_source)}"
   local out rc=0
   out="$(sp create --skip-console --label orca-recipe "$name" 2>&1)" || rc=$?
   # Restricted tokens cannot set labels; the label only tags the Sprite, so create it without.

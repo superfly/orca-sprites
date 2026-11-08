@@ -58,10 +58,30 @@ scoped to one Sprite's URL would change this trade-off.
 
 ## Packaging: an Orca plugin
 
-The recipe ships as a **declarative** Orca plugin: `orca-plugin.json` contributes
-`recipes/sprites.json` through `contributes.vmRecipes`, so Sprites appears under Run on for
-every repository and nothing is copied into repos. Orca asks once to approve the recipe's
-commands; there is no plugin worker and no host-API capability.
+The recipe ships as an Orca plugin: `orca-plugin.json` contributes `recipes/sprites.json`
+through `contributes.vmRecipes`, so Sprites appears under Run on for every repository and
+nothing is copied into repos. Orca asks once to approve the recipe's commands. There is no
+plugin worker.
+
+### The organization setting
+
+The plugin also contributes one setting, `org`, which Orca shows on the plugin's page in
+Settings. Orca allows `contributes.settings` only at the `sandboxed-ui` execution level and
+with the `settings:own` capability, so the manifest declares both, though it has no panel.
+For existing installs, that is an update that asks for more access, which Orca asks the user to
+approve.
+
+A recipe can't call `settings.get`: Orca runs each phase as a shell command whose environment is
+Orca's own plus the `ORCA_*` variables, and the host API is for workers, panels and editors. So
+`create` reads the file Orca keeps plugin settings in,
+`<userData>/plugins-data/<publisher>.sprites/settings.json`, a flat JSON object. `userData` is
+`~/.config/orca` on Linux (or `$XDG_CONFIG_HOME/orca`) and `~/Library/Application
+Support/orca` on macOS. The publisher is `superfly` for a catalog or Git install and `local` for
+a folder install. The recipe can't tell which install is running, so it reads the `superfly`
+file first, then the `local` one, and logs a note when they name different organizations. This file is Orca's internal storage, not a published interface. If Orca moves
+it, the recipe finds no file and falls back to the `sprite` CLI's default organization, and the
+provisioning log shows that. The order is `SPRITES_ORG`, then the setting, then the CLI's
+default; a malformed name in the setting stops `create` before it makes a Sprite.
 
 A plugin recipe must be self-contained (each command is a string of at most 32 KiB), so
 `scripts/build.mjs` inlines `src/sprites/lib.sh` into each phase and wraps it as
@@ -80,7 +100,7 @@ inside `$(...)` is not used: bash 3.2 misparses an apostrophe in one.
 
 There is no state file. `create` takes its settings from what the desktop already knows: the
 local repository (its checked-out branch, its `origin` remote and `origin/HEAD`), the desktop
-Orca CLI's version, and the `sprite` CLI's default organization. Orca sets `ORCA_REPO_URL`, `ORCA_REPO_REF` and `ORCA_VERSION` only for
+Orca CLI's version, and the organization from Orca's Settings or the `sprite` CLI's default. Orca sets `ORCA_REPO_URL`, `ORCA_REPO_REF` and `ORCA_VERSION` only for
 `provisioned-root` recipes, or not at all, so the recipe does not rely on them. `SPRITES_*` variables override each one; see the README. The
 lifecycle phases take the Sprite name and organization from `userData` in the payload.
 

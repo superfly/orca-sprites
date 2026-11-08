@@ -58,11 +58,18 @@ the Sprite, run `gh auth login` in a workspace terminal.
 
 ## Settings
 
-Everything has a default. To change one, set the variable in the environment Orca starts from.
+**Organization.** New Sprites go to the `sprite` CLI's default organization. To use another
+one, open **Settings → Plugins → Fly.io Sprites** and type its name under **Sprites
+organization**, as `sprite org list` shows it. Workspaces you create after that use it; existing
+Sprites stay where they are. Clear the field to go back to the default. Step 1 of the
+provisioning log names the organization and where it came from.
+
+Everything else has a default. To change one, set the variable in the environment Orca
+starts from.
 
 | Variable | Default |
 |---|---|
-| `SPRITES_ORG` | The `sprite` CLI's default organization |
+| `SPRITES_ORG` | The organization in Orca's Settings, else the `sprite` CLI's default. When set, it takes precedence over the Settings field. |
 | `SPRITES_PROJECT_ROOT` | `/home/sprite/<repository name>` |
 | `SPRITES_ORCA_VERSION` | The version of your Orca CLI (`orca-ide --version`), else 1.4.246 |
 | `SPRITES_NAME_PREFIX` | `orca` |
@@ -80,7 +87,11 @@ headers, so the pairing code is the credential: keep it private. See
   one with `sprite destroy --force <name>`.
 - **"the sprite CLI is not on PATH"** or **"node is not on PATH"**: Orca does not see your
   shell's `PATH`. Start Orca from a terminal.
-- **"no Sprites org"**: run `sprite login`, or set `SPRITES_ORG`.
+- **"no Sprites org"**: run `sprite login`, or set the organization in Settings → Plugins →
+  Fly.io Sprites.
+- **Sprites go to a different organization than the one in Settings.** `SPRITES_ORG` takes
+  precedence when it is set where Orca starts. A `SPRITE_TOKEN` in that environment also
+  decides the organization: a token belongs to one organization.
 - **An account added in Orca does not seem to take effect.** Workspaces created with plugin
   version 0.1.5 or earlier still get the old `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`
   from `~/.orca-agent.env` on the Sprite. Delete and recreate the workspace, or remove that

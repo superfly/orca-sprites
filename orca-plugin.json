@@ -4,7 +4,7 @@
   "id": "sprites",
   "name": "Fly.io Sprites",
   "version": "0.4.0",
-  "execution": "declarative",
+  "execution": "sandboxed-ui",
   "description": "Run each Orca workspace in its own Sprite, a persistent Linux VM from Fly.io. Adds Sprites under Run on > Per-Workspace Environment.",
   "icon": "images/icon.png",
   "author": {
@@ -22,9 +22,23 @@
       {
         "path": "recipes/sprites.json"
       }
+    ],
+    "settings": [
+      {
+        "key": "org",
+        "title": "Sprites organization",
+        "type": "string",
+        "description": "The Fly.io organization new Sprites are created in, as shown by sprite org list. Leave it empty to use the sprite CLI's default organization. SPRITES_ORG, when set in the environment Orca starts from, takes precedence.",
+        "placeholder": "my-org",
+        "maxLength": 128
+      }
     ]
   },
-  "capabilities": [],
+  "capabilities": [
+    {
+      "kind": "settings:own"
+    }
+  ],
   "cover": {
     "path": "images/cover.jpg",
     "alt": "Sprites for Orca, with the Fly.io logo, beside an illustration of the Fly.io balloon in swim goggles swimming underwater with fish"
