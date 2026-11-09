@@ -14,8 +14,11 @@
 #   SPRITES_ORCA_VERSION   orca-ide version to install (default: the desktop Orca CLI's version)
 #   SPRITES_NAME_PREFIX    Sprite name prefix (default: orca)
 #   SPRITES_BROWSER        1: install Orca's whole desktop package, which the per-workspace
-#                          browser needs (about a minute slower). Default: unpack the package
-#                          and run orca serve on orcad alone, without the browser
+#                          browser needs (about a minute slower). Default: Orca's server-only
+#                          build when the release has one, else unpack the desktop package and
+#                          run orca serve on orcad alone; either way without the browser
+#   SPRITES_SERVER_BASE    For testing: a URL to download the server-only build and its
+#                          orca-server-sha256sums.txt from, instead of the Orca release
 
 log() { printf '[sprites] %s\n' "$*" >&2; }
 # step <n> <text>: start step n of create's 5 and log it; step_done logs how long it took.
@@ -29,6 +32,7 @@ command -v node >/dev/null 2>&1 || die "node is not on PATH; the recipe uses it 
 org="${SPRITES_ORG:-}"
 repo_dir="" repo_url="" repo_ref="" origin_head="" project_root=""
 name_prefix="${SPRITES_NAME_PREFIX:-orca}"
+server_base="${SPRITES_SERVER_BASE:-}"
 # Orca does not pass its version to recipes, so ask the desktop's Orca CLI, then fall back
 # to the version this recipe was tested with.
 detect_orca_version() {
@@ -129,7 +133,7 @@ resolve_repo() {
   base="$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '-')"
   project_root="${SPRITES_PROJECT_ROOT:-/home/sprite/${base:-project}}"
   case "$project_root" in /*) ;; *) die "SPRITES_PROJECT_ROOT must be an absolute path on the Sprite: $project_root" ;; esac
-  for v in repo_url repo_ref origin_head project_root orca_version; do check_env_value "$v" "${!v}"; done
+  for v in repo_url repo_ref origin_head project_root orca_version server_base; do check_env_value "$v" "${!v}"; done
 }
 
 # make_bundle <file>: bundle the local branches, origin's branches and tags, so the Sprite
@@ -230,10 +234,42 @@ head -c "$BUNDLE_SIZE" > "$BUNDLE_FILE"
 bundle_secs=$SECONDS
 echo "[sprites] [2/5] Installing Orca $ORCA_VERSION on the Sprite" >&2
 SECONDS=0
-curl -fsSL -o /tmp/orca.deb "https://github.com/stablyai/orca/releases/download/v$ORCA_VERSION/orca-ide_${ORCA_VERSION}_amd64.deb" \
-  || { echo "[sprites] error: could not download orca-ide $ORCA_VERSION. Set SPRITES_ORCA_VERSION to a released Orca version." >&2; false; }
 installed=""
 if [ "${ORCA_INSTALL:-fast}" = fast ]; then
+  # Newer Orca releases carry a server-only build for Linux (orca-server-linux-<arch>.tar.gz):
+  # orcad, its pinned Node and the orca-ide CLI, about 60 MB, with no desktop packages. Use it
+  # when this version has one, checked against the release'"'"'s checksums file. Otherwise unpack
+  # the .deb (below).
+  arch="$(uname -m | sed "s/x86_64/x64/; s/aarch64/arm64/")"
+  srv="$HOME/.orca-server"; srv_tgz="orca-server-linux-$arch.tar.gz"
+  srv_base="${ORCA_SERVER_BASE:-https://github.com/stablyai/orca/releases/download/v$ORCA_VERSION}"
+  srv_tmp="$(mktemp -d)"
+  srv_code="$(curl -sSL -o "$srv_tmp/$srv_tgz" -w "%{http_code}" "$srv_base/$srv_tgz" 2>>/tmp/orca-server.log || true)"
+  if [ "$srv_code" = 200 ] \
+     && curl -fsSL -o "$srv_tmp/sums" "$srv_base/orca-server-sha256sums.txt" 2>>/tmp/orca-server.log \
+     && srv_sum="$(grep -E "^[0-9a-f]{64} [ *]([^ ]*/)?$srv_tgz\$" "$srv_tmp/sums" | head -n 1 | cut -c1-64)" \
+     && [ -n "$srv_sum" ] && echo "$srv_sum  $srv_tmp/$srv_tgz" | sha256sum --check --quiet >>/tmp/orca-server.log 2>&1 \
+     && rm -rf "$srv" && mkdir -p "$srv" "$HOME/.local/bin" \
+     && tar -xzf "$srv_tmp/$srv_tgz" -C "$srv" --strip-components=1 2>>/tmp/orca-server.log \
+     && ln -sfn "$srv/bin/orca-ide" "$HOME/.local/bin/orca-ide" \
+     && "$HOME/.local/bin/orca-ide" --version >>/tmp/orca-server.log 2>&1; then
+    installed=server
+  elif [ "$srv_code" = 404 ]; then
+    echo "[sprites]       no server-only build of Orca $ORCA_VERSION at $srv_base; unpacking the desktop package instead" >&2
+    rm -rf "$srv" "$HOME/.local/bin/orca-ide"
+  else
+    srv_why="HTTP $srv_code"; [ "$srv_code" != 200 ] || srv_why="it failed its checks"
+    echo "[sprites]       could not install Orca'"'"'s server-only build ($srv_why); unpacking the desktop package instead" >&2
+    tail -n 5 /tmp/orca-server.log >&2 || true
+    rm -rf "$srv" "$HOME/.local/bin/orca-ide"
+  fi
+  rm -rf "$srv_tmp"
+fi
+if [ -z "$installed" ]; then
+  curl -fsSL -o /tmp/orca.deb "https://github.com/stablyai/orca/releases/download/v$ORCA_VERSION/orca-ide_${ORCA_VERSION}_$(dpkg --print-architecture).deb" \
+    || { echo "[sprites] error: could not download orca-ide $ORCA_VERSION. Set SPRITES_ORCA_VERSION to a released Orca version." >&2; false; }
+fi
+if [ -z "$installed" ] && [ "${ORCA_INSTALL:-fast}" = fast ]; then
   # orca serve runs on orcad, Orca'"'"'s own Node server, which the .deb carries. Unpack the .deb
   # instead of installing it, and run Orca'"'"'s CLI on the Sprite'"'"'s Node: the desktop app and its
   # GTK and X11 dependencies are never needed. The CLI finds orcad through the app executable
@@ -267,11 +303,11 @@ if [ -z "$installed" ]; then
   installed=full
 fi
 rm -f /tmp/orca.deb
-if [ "$installed" = full ]; then
-  echo "[sprites]       done (${SECONDS}s, full install: the per-workspace browser works)" >&2
-else
-  echo "[sprites]       done (${SECONDS}s, without the desktop app: no per-workspace browser; set SPRITES_BROWSER=1 for it)" >&2
-fi
+case "$installed" in
+  full) echo "[sprites]       done (${SECONDS}s, full install: the per-workspace browser works)" >&2 ;;
+  server) echo "[sprites]       done (${SECONDS}s, Orca'"'"'s server-only build: no per-workspace browser; set SPRITES_BROWSER=1 for it)" >&2 ;;
+  *) echo "[sprites]       done (${SECONDS}s, without the desktop app: no per-workspace browser; set SPRITES_BROWSER=1 for it)" >&2 ;;
+esac
 echo "[sprites] [3/5] Checking out $ORCA_REPO_REF at $BUNDLE_NOTE into $ORCA_PROJECT_ROOT (sent in ${bundle_secs}s)" >&2
 if [ "${BUNDLE_DIRTY:-0}" = 1 ]; then echo "[sprites]       uncommitted changes stay on this computer; commit them to have them on the Sprite" >&2; fi
 SECONDS=0
@@ -417,7 +453,7 @@ build_sprite() {
   local name="$1"
   local out
   out="$(sp config update --url-auth public "$name" 2>&1)" || { printf '%s\n' "$out" >&2; die "could not give Sprite $name a public URL"; }
-  with_checkout "$name" "ORCA_VERSION=$orca_version,ORCA_INSTALL=$install_mode,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_ORIGIN_HEAD=$origin_head,ORCA_PROJECT_ROOT=$project_root" \
+  with_checkout "$name" "${server_base:+ORCA_SERVER_BASE=$server_base,}ORCA_VERSION=$orca_version,ORCA_INSTALL=$install_mode,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_ORIGIN_HEAD=$origin_head,ORCA_PROJECT_ROOT=$project_root" \
     bash -lc "$remote_build" >&2
 }
 
