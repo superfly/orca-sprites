@@ -113,7 +113,7 @@ browser; see below). It tries two ways, in order.
 
 ### Orca's server-only build
 
-Newer Orca releases publish the server alone for Linux: `orca-server-linux-x64.tar.gz` and
+Orca releases from 1.4.256 on publish the server alone for Linux: `orca-server-linux-x64.tar.gz` and
 `-arm64`, about 60 MB, with orcad, its pinned Node and a `bin/orca-ide` launcher, plus
 `orca-server-sha256sums.txt` (Orca docs: Remote Orca Servers, "Install only the server on
 Linux"). When the release for the Orca version being installed has one, the recipe:
@@ -144,6 +144,9 @@ command in its terminal.
 
 The stand-in host is not faster than GitHub: a Sprite downloads 60 MB from GitHub's release CDN
 (a range request for the first 60 MB of `orca-ide_1.4.254_amd64.deb`) in 0.23–0.35 s, 5 runs.
+
+Checked again on 2026-11-10 against 1.4.256, the first release with the tarball, with no
+override: the install step took 3 s, `create` 17.8 s and a working terminal 44.4 s (n=1).
 
 ### Unpacking the desktop package
 
