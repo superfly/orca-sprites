@@ -106,11 +106,52 @@ the provisioning log says so when there are some.
 
 ## Fast install: `orca serve` without the desktop app
 
-`orca serve` runs on orcad, Orca's own Node server, not on Electron. The `.deb` carries orcad
-(`resources/orcad-template/`, with per-platform targets) next to the desktop app, but
-installing the `.deb` with `apt-get` pulls in 90 to 230 GTK, X11 and Xvfb packages and takes
-about a minute. By default the recipe skips that (`SPRITES_BROWSER=1` installs the whole
-package, for the browser; see below):
+`orca serve` runs on orcad, Orca's own Node server, not on Electron. Installing the desktop
+`.deb` with `apt-get` pulls in 90 to 230 GTK, X11 and Xvfb packages and takes about a minute.
+By default the recipe skips that (`SPRITES_BROWSER=1` installs the whole package, for the
+browser; see below). It tries two ways, in order.
+
+### Orca's server-only build
+
+Orca releases from 1.4.256 on publish the server alone for Linux: `orca-server-linux-x64.tar.gz` and
+`-arm64`, about 60 MB, with orcad, its pinned Node and a `bin/orca-ide` launcher, plus
+`orca-server-sha256sums.txt` (Orca docs: Remote Orca Servers, "Install only the server on
+Linux"). When the release for the Orca version being installed has one, the recipe:
+
+1. downloads the tarball and the checksums file from that release, and checks the tarball
+   against its line in the checksums file;
+2. unpacks it into `~/.orca-server` and links `~/.local/bin/orca-ide` to its launcher;
+3. runs `orca-ide --version` as a check.
+
+Any failure falls back to unpacking the `.deb` (next section), and the provisioning log says
+why. A release without the tarball answers 404, logged as "has no server-only build". This is
+the path Orca supports and tests for headless servers; the `.deb` unpacking below is the
+workaround for releases that predate it. `SPRITES_SERVER_BASE` points the download at another
+URL with the same two files, for testing a build before it is released.
+
+Measured 2026-11-09, before any release carried the tarball, with the build from Orca's own CI
+for the change that added it (stamped 1.4.214), `octocat/Hello-World`, one run at a time. In
+the first set the tarball was sent from the desktop over `sprite exec` stdin by a test build of
+the recipe, interleaved with runs of the unpacked `.deb`. In the second, this recipe downloaded
+it from a stand-in URL on another Sprite. Every run paired, created a workspace and ran a
+command in its terminal.
+
+| | Unpacked `.deb` | Server-only build, sent from the desktop | Server-only build, downloaded |
+|---|---|---|---|
+| Install step | 23–33 s (n=4) | 1–2 s (n=4) | 3–5 s (n=3) |
+| `create`, median (range) | 41.0 s (38.5–50.6, n=3) | 16.1 s (14.4–17.8, n=4) | 19.2 s (17.7–21.2, n=3) |
+| To a working terminal, median | 66.6 s (n=3) | 41.3 s (n=4) | 46.1 s (n=3) |
+
+The stand-in host is not faster than GitHub: a Sprite downloads 60 MB from GitHub's release CDN
+(a range request for the first 60 MB of `orca-ide_1.4.254_amd64.deb`) in 0.23–0.35 s, 5 runs.
+
+Checked again on 2026-11-10 against 1.4.256, the first release with the tarball, with no
+override: the install step took 3 s, `create` 17.8 s and a working terminal 44.4 s (n=1).
+
+### Unpacking the desktop package
+
+The `.deb` carries orcad (`resources/orcad-template/`, with per-platform targets) next to the
+desktop app. For a release without the server-only build:
 
 1. `dpkg-deb -x` unpacks the `.deb` into `~/.orca-app` (about 8 s). Nothing is installed.
 2. The Sprite's `node` binary is copied to `~/.orca-app/node.bin`. (`node` on the Sprite is a
@@ -127,8 +168,8 @@ package, for the browser; see below):
    Node. If it answers anything else, or any step fails, the fast files are removed and the
    full install runs instead. The provisioning log says which install was used.
 
-The Electron binary in the unpacked package cannot start without the desktop libraries, so
-anything that launches Electron on the server cannot work on a fast-installed Sprite. Tested
+Neither fast install has the Electron app, so anything that launches Electron on the server
+cannot work on a fast-installed Sprite. Tested
 and working: pairing, adding the repo, creating a workspace from a local branch, workspace
 terminals, Claude Code, the in-terminal `orca` CLI and `orca account list`, suspend and resume
 with the same pairing code. **Not available: the per-workspace browser.** On a remote server
