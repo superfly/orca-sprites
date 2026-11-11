@@ -22,6 +22,7 @@ name_is_free "$name"
 # leftovers with: sprite list --prefix orca-
 ok=0
 cleanup() {
+  [ -z "$checkout_tmp" ] || rm -rf "$checkout_tmp"
   [ "$ok" = 1 ] && return 0
   log "create failed; destroying $name"
   destroy_sprite "$name" || true

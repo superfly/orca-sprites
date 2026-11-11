@@ -53,8 +53,11 @@ The Sprite gets your repository from this computer, not from GitHub: your branch
 commits you have not pushed), `origin`'s branches and your tags, checked out on the branch you
 have checked out here. It needs no git token, so private repositories and repositories with no
 remote work too. Uncommitted changes stay on this computer. Commits on the Sprite use your
-`user.name` and `user.email`. `origin` points at the same repository over HTTPS: to push from
-the Sprite, run `gh auth login` in a workspace terminal.
+`user.name` and `user.email`. `origin` points at the same repository over HTTPS.
+
+By default no Git token leaves this computer, so the Sprite cannot fetch from a private
+repository or push. To push from one Sprite, run `gh auth login` in a workspace terminal. To
+give every new Sprite a Git sign-in, set `SPRITES_GIT_TOKEN` (see [Git access](#git-access)).
 
 ## Settings
 
@@ -66,14 +69,40 @@ Everything has a default. To change one, set the variable in the environment Orc
 | `SPRITES_PROJECT_ROOT` | `/home/sprite/<repository name>` |
 | `SPRITES_ORCA_VERSION` | The version of your Orca app: `Orca.app` on macOS, the `orca-ide` package on Linux, else the Orca CLI. Else 1.4.256. Step 2 of the provisioning log says where the version came from. |
 | `SPRITES_NAME_PREFIX` | `orca` |
+| `SPRITES_GIT_TOKEN` | Not set: no Git token is sent. Set it to a token, or to `gh` for this computer's GitHub CLI login, to give each new Sprite a Git sign-in. See [Git access](#git-access). |
 | `SPRITES_BROWSER` | Off: the Sprite gets only Orca's server, from Orca's server-only build when the release has one. Set to `1` for Orca's per-workspace browser: the Sprite then installs Orca's whole desktop app, which takes about a minute longer. |
 
 Each workspace's Sprite has a **public** URL. The Orca client cannot send Sprites auth
 headers, so the pairing code is the credential: keep it private. See
 [provider-sprites.md](provider-sprites.md) for why, and for the design and measured timings.
 
+## Git access
+
+Orca 1.4.256 and later check each new VM before they open the workspace. One check is that the
+VM can fetch from `origin` and push to it. A Sprite has no Git sign-in by default, so Orca stops
+on "The VM is up, but its environment checks failed" with "Cannot reach remote" or "A dry-run
+push was refused". You have two choices:
+
+- **Open anyway.** The workspace opens on the Sprite and works. Only fetching and pushing from
+  the Sprite need a sign-in, which you can add later with `gh auth login` in a workspace terminal.
+- **Set `SPRITES_GIT_TOKEN`** in the environment Orca starts from. Each new Sprite then stores
+  the token as its Git sign-in for `origin`'s host, and the check passes when the token can
+  push to the repository. It is made for GitHub and GitHub Enterprise tokens.
+  - `SPRITES_GIT_TOKEN=<token>` sends that token. For GitHub, a
+    [fine-grained token](https://github.com/settings/personal-access-tokens) limited to the
+    repositories you use, with read and write access to Contents, is enough.
+  - `SPRITES_GIT_TOKEN=gh` sends the token of this computer's GitHub CLI login
+    (`gh auth token`). That token usually reaches every repository you can.
+
+The token stays on the Sprite, in `~/.git-credentials`, until the workspace is deleted. Every
+agent and terminal on that Sprite can use it, and the Sprite's URL is public (Orca's pairing code
+is what protects it). So prefer a token that can do only what the Sprite needs. A new token
+reaches only Sprites created after you set it.
+
 ## Troubleshooting
 
+- **"The VM is up, but its environment checks failed".** If the failed check is about the Git
+  remote, see [Git access](#git-access). Choose **Open anyway** to use the workspace as it is.
 - **The Sprite runs a different Orca version from your desktop.** Step 2 of the provisioning log
   says where the version came from. If it says the recipe's default, the recipe could not find
   your Orca app or CLI. Set `SPRITES_ORCA_VERSION` to the version in Orca > About Orca.
