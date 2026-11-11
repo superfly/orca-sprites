@@ -13,6 +13,9 @@
 #   SPRITES_PROJECT_ROOT   checkout path on the Sprite (default: /home/sprite/<repo name>)
 #   SPRITES_ORCA_VERSION   Orca version to install (default: the desktop Orca app's version)
 #   SPRITES_NAME_PREFIX    Sprite name prefix (default: orca)
+#   SPRITES_GIT_TOKEN      Opt-in: a token to store on the Sprite as its Git sign-in for origin's
+#                          host, so the Sprite can fetch and push. "gh" means this computer's
+#                          GitHub CLI login (gh auth token). Default: no token leaves this computer
 #   SPRITES_BROWSER        1: install Orca's whole desktop package, which the per-workspace
 #                          browser needs (about a minute slower). Default: Orca's server-only
 #                          build when the release has one, else unpack the desktop package and
@@ -30,7 +33,7 @@ command -v sprite >/dev/null 2>&1 || die "the sprite CLI is not on PATH (install
 command -v node >/dev/null 2>&1 || die "node is not on PATH; the recipe uses it to read and write JSON"
 
 org="${SPRITES_ORG:-}"
-repo_dir="" repo_url="" repo_ref="" origin_head="" project_root=""
+repo_dir="" repo_url="" repo_ref="" origin_head="" project_root="" git_token="" git_token_from="" checkout_tmp=""
 name_prefix="${SPRITES_NAME_PREFIX:-orca}"
 server_base="${SPRITES_SERVER_BASE:-}"
 # resolve_orca_version (create only): sets orca_version, the Orca release to install, and
@@ -149,7 +152,7 @@ resolve_repo() {
   case "$repo_url" in
     https://*|http://*) ;;
     git@*:*) repo_url="${repo_url#git@}"; repo_url="https://${repo_url/://}" ;;
-    ssh://git@*) repo_url="https://${repo_url#ssh://git@}" ;;
+    ssh://git@*) repo_url="$(printf '%s' "https://${repo_url#ssh://git@}" | sed -E 's#^(https://[^/:]+):[0-9]+/#\1/#')" ;;
     *) repo_url="" ;;
   esac
   origin_head="$(git -C "$repo_dir" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)"
@@ -160,6 +163,7 @@ resolve_repo() {
   project_root="${SPRITES_PROJECT_ROOT:-/home/sprite/${base:-project}}"
   case "$project_root" in /*) ;; *) die "SPRITES_PROJECT_ROOT must be an absolute path on the Sprite: $project_root" ;; esac
   resolve_orca_version
+  resolve_git_token
   for v in repo_url repo_ref origin_head project_root orca_version orca_version_from server_base; do check_env_value "$v" "${!v}"; done
 }
 
@@ -177,14 +181,43 @@ make_bundle() {
   return "$rc"
 }
 
-# git_identity_file <file>: the local git user.name and user.email as shell exports, so
-# commits on the Sprite carry the same author. A file, because names can contain commas.
+# resolve_git_token (create only, called by resolve_repo): sets git_token and git_token_from
+# when SPRITES_GIT_TOKEN opts in. The token is for origin's host; without an origin there is no
+# use for it. It must be made of URL-safe characters, as GitHub's tokens are, because it is
+# stored in a credential URL.
+resolve_git_token() {
+  local want="${SPRITES_GIT_TOKEN:-}" host gh=""
+  case "$want" in ""|0|no|off|false) return 0 ;; esac
+  case "$repo_url" in
+    https://*) ;;
+    *) log "SPRITES_GIT_TOKEN is set, but this repository has no HTTPS or SSH origin remote; no token is sent"; return 0 ;;
+  esac
+  host="${repo_url#https://}"; host="${host%%/*}"
+  if [ "$want" = gh ]; then
+    for gh in gh /opt/homebrew/bin/gh /usr/local/bin/gh "$HOME/.local/bin/gh"; do
+      command -v "$gh" >/dev/null 2>&1 && break
+      gh=""
+    done
+    [ -n "$gh" ] || die "SPRITES_GIT_TOKEN=gh needs the GitHub CLI (gh) on this computer; install it, or set SPRITES_GIT_TOKEN to a token"
+    git_token="$("$gh" auth token --hostname "$host" 2>/dev/null || true)"
+    [ -n "$git_token" ] || die "SPRITES_GIT_TOKEN=gh, but gh is not signed in to $host on this computer; run: gh auth login --hostname $host"
+    git_token_from="this computer's gh login"
+  else
+    git_token="$want" git_token_from="SPRITES_GIT_TOKEN"
+  fi
+  case "$git_token" in *[!A-Za-z0-9._~-]*) die "the Git token from $git_token_from has characters a GitHub token does not have (letters, digits and . _ ~ - are allowed); check SPRITES_GIT_TOKEN" ;; esac
+}
+
+# git_identity_file <file>: shell variables for the Sprite, not exported: the local git user.name and
+# user.email, so commits there carry the same author, and the opt-in Git token. A file, because
+# names can contain commas and a token must not appear in a command line.
 git_identity_file() {
   local n e
   n="$(git -C "$repo_dir" config user.name 2>/dev/null || true)"
   e="$(git -C "$repo_dir" config user.email 2>/dev/null || true)"
-  { [ -z "$n" ] || printf 'export GIT_USER_NAME=%q\n' "$n"
-    [ -z "$e" ] || printf 'export GIT_USER_EMAIL=%q\n' "$e"; } > "$1"
+  { [ -z "$n" ] || printf 'GIT_USER_NAME=%q\n' "$n"
+    [ -z "$e" ] || printf 'GIT_USER_EMAIL=%q\n' "$e"
+    [ -z "$git_token" ] || printf 'GIT_TOKEN=%q GIT_TOKEN_FROM=%q\n' "$git_token" "$git_token_from"; } > "$1"
 }
 
 # human_size <bytes>
@@ -221,12 +254,13 @@ destroy_sprite() {
 
 # with_checkout <sprite> <env K=V,...> <cmd...>: run a command with the repository bundle on
 # its stdin and the git identity uploaded at $IDENTITY_FILE. The bundle goes over stdin
-# because `sprite exec --file` rejects uploads of 32 MB and more (HTTP 413). No git token is
-# sent.
+# because `sprite exec --file` rejects uploads of 32 MB and more (HTTP 413). No Git token is
+# sent unless SPRITES_GIT_TOKEN opts in; then it travels in the identity file.
 with_checkout() {
   local name="$1" envs="$2"; shift 2
   local tmp rc=0 stamp size note dirty=0
   tmp="$(umask 077; mktemp -d "${TMPDIR:-/tmp}/orca-sprites.XXXXXX")"
+  checkout_tmp="$tmp"  # create.sh removes it if the phase exits early; it can hold the Git token
   # Orca stops a cancelled phase with TERM; do not leave the bundle behind. The exit still
   # runs the phase's own EXIT trap (create.sh destroys the half-built Sprite).
   # shellcheck disable=SC2064
@@ -242,7 +276,7 @@ with_checkout() {
   rexec_stdin=1 rexec "$name" --file "$tmp/identity.env:/tmp/orca-identity-$stamp.env" \
     --env "${envs:+$envs,}BUNDLE_FILE=/tmp/orca-repo-$stamp.bundle,IDENTITY_FILE=/tmp/orca-identity-$stamp.env,BUNDLE_SIZE=$size,BUNDLE_NOTE=$note,BUNDLE_DIRTY=$dirty" \
     -- "$@" < "$tmp/repo.bundle" || rc=$?
-  rm -rf "$tmp"
+  rm -rf "$tmp"; checkout_tmp=""
   trap - TERM INT HUP
   return "$rc"
 }
@@ -253,7 +287,11 @@ with_checkout() {
 
 # Installs Orca and checks out the repository.
 remote_build='set -euo pipefail
-# Read the repository bundle from stdin first, so nothing later (apt, dpkg) can consume it.
+# The identity upload lands root-owned and can hold the Git token: read it into this shell
+# (not the environment) and remove it before anything can fail.
+if [ -s "$IDENTITY_FILE" ]; then . "$IDENTITY_FILE"; fi
+sudo rm -f "$IDENTITY_FILE" </dev/null
+# Read the repository bundle from stdin next, so nothing later (apt, dpkg) can consume it.
 SECONDS=0
 head -c "$BUNDLE_SIZE" > "$BUNDLE_FILE"
 [ "$(wc -c < "$BUNDLE_FILE")" = "$BUNDLE_SIZE" ] \
@@ -338,12 +376,10 @@ esac
 echo "[sprites] [3/5] Checking out $ORCA_REPO_REF at $BUNDLE_NOTE into $ORCA_PROJECT_ROOT (sent in ${bundle_secs}s)" >&2
 if [ "${BUNDLE_DIRTY:-0}" = 1 ]; then echo "[sprites]       uncommitted changes stay on this computer; commit them to have them on the Sprite" >&2; fi
 SECONDS=0
-# The identity upload lands root-owned; read it, then remove it with sudo.
-if [ -s "$IDENTITY_FILE" ]; then . "$IDENTITY_FILE"; fi
 git init --quiet "$ORCA_PROJECT_ROOT"
 cd "$ORCA_PROJECT_ROOT"
 git fetch --quiet --update-head-ok "$BUNDLE_FILE" "refs/heads/*:refs/heads/*" "refs/remotes/origin/*:refs/remotes/origin/*" "refs/tags/*:refs/tags/*"
-rm -f "$BUNDLE_FILE"; sudo rm -f "$IDENTITY_FILE"
+rm -f "$BUNDLE_FILE"
 if git show-ref --verify --quiet "refs/heads/$ORCA_REPO_REF"; then
   git switch --quiet "$ORCA_REPO_REF"
 else
@@ -355,6 +391,16 @@ if [ -n "${ORCA_REPO_URL:-}" ]; then
   # Track origin like the local branch does, when origin has a branch of that name.
   if git show-ref --verify --quiet "refs/remotes/origin/$ORCA_REPO_REF"; then git branch --quiet --set-upstream-to "origin/$ORCA_REPO_REF"; fi
 fi
+# Opt-in Git sign-in for origin'"'"'s host only, in a file only this user can read.
+git_note=""
+if [ -n "${GIT_TOKEN:-}" ] && [ -n "${ORCA_REPO_URL:-}" ]; then
+  git_host="${ORCA_REPO_URL#https://}"; git_host="${git_host%%/*}"
+  ( umask 077; printf "https://x-access-token:%s@%s\n" "$GIT_TOKEN" "$git_host" > "$HOME/.git-credentials" )
+  chmod 600 "$HOME/.git-credentials"
+  git config --global --replace-all "credential.https://$git_host.helper" store
+  git_note=", Git sign-in for $git_host from $GIT_TOKEN_FROM"
+fi
+unset GIT_TOKEN
 if [ -n "${GIT_USER_NAME:-}" ]; then git config --global user.name "$GIT_USER_NAME"; fi
 if [ -n "${GIT_USER_EMAIL:-}" ]; then git config --global user.email "$GIT_USER_EMAIL"; fi
 # Claude Code: skip the first-run screens. People sign it in from Orca (Settings > Accounts).
@@ -363,7 +409,7 @@ node -e "
   let c = {}; try { c = JSON.parse(fs.readFileSync(p, \"utf8\")); } catch {}
   c.hasCompletedOnboarding = true; fs.writeFileSync(p, JSON.stringify(c, null, 2));
 "
-echo "[sprites]       done (${SECONDS}s, $(git rev-parse --short HEAD))" >&2'
+echo "[sprites]       done (${SECONDS}s, $(git rev-parse --short HEAD)$git_note)" >&2'
 
 # Waits until something answers on the serve port.
 remote_wait_port='wait_port() {
@@ -499,6 +545,7 @@ serve_sprite() {
   step_done
   log "[5/5] Ready in $(( $(date +%s) - create_started ))s: $url"
   log "Next: sign Claude in on this Sprite. Settings > Host: this workspace's VM > Accounts > Claude > Add Account"
+  [ -n "$git_token" ] || [ -z "$repo_url" ] || [ -n "${SPRITES_GIT_TOKEN:-}" ] || log "This Sprite has no Git sign-in, so Orca's environment check reports that it cannot fetch or push. Choose Open anyway, or set SPRITES_GIT_TOKEN (see the README) to give Sprites one."
 }
 
 # emit_result <recipe-json> <name>: merge userData and print.

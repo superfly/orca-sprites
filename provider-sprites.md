@@ -105,10 +105,36 @@ the Sprite fetches it into a fresh repository with the same ref names (`refs/hea
 `origin/HEAD` as it is locally, and checks out the local branch. Tested: a workspace based on
 a local branch with an unpushed commit has that commit; a repository with no remote works.
 
-No git token reaches the Sprite. `git fetch` and `git push` in the workspace need their own
+By default no Git token reaches the Sprite. `git fetch` and `git push` in the workspace need their own
 credentials (for example `gh auth login` in a workspace terminal). The local `user.name` and
 `user.email` are copied to the Sprite's global git config. Uncommitted changes are not sent;
 the provisioning log says so when there are some.
+
+### The opt-in Git token and Orca's environment check
+
+Orca 1.4.256 added an environment check to VM creates (`environment.doctor` on the VM's Orca
+server; older servers skip it). Its Git part runs `git ls-remote <push remote> HEAD` and then
+`git push --dry-run --no-verify --porcelain <push remote> HEAD:refs/heads/orca-env-doctor-push-probe`
+in the Sprite's checkout. Either failing pauses the create on a failure card until the user
+chooses Open anyway, Retry checks or Dismiss. A recipe cannot skip it or declare read-only
+access. A Sprite with no Git credential fails it for every repository that has an `origin`: on
+the fetch for a private one, on the push for a public one.
+
+`SPRITES_GIT_TOKEN` is the opt-in that makes it pass. `create` resolves the token on the desktop
+(the value itself, or `gh auth token --hostname <origin's host>` for `gh`), accepts only
+URL-safe characters, and sends it only when `origin` is HTTPS or SSH. It travels in the identity
+file uploaded with `sprite exec --file`, never in a command line or `--env`; the Sprite reads
+that file into shell variables and deletes it as the first step of the build. On the Sprite the
+build writes `https://x-access-token:<token>@<host>` to `~/.git-credentials` (mode 600) and sets
+`credential.https://<host>.helper store`, so the token is offered to that host only. The
+user name `x-access-token` and the accepted characters are GitHub's, so this is for GitHub and
+GitHub Enterprise. The log
+names the host and where the token came from, never the token. Without the opt-in, the last
+line of the provisioning log says the check will fail and what to do.
+
+It is opt-in because the token then lives on a VM with a public URL, where every agent can use
+it. A token that cannot push to the repository (a fork contributor's, or a read-only one) still
+fails the push check.
 
 ## Fast install: `orca serve` without the desktop app
 
