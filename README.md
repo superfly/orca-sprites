@@ -64,7 +64,7 @@ Everything has a default. To change one, set the variable in the environment Orc
 |---|---|
 | `SPRITES_ORG` | The `sprite` CLI's default organization |
 | `SPRITES_PROJECT_ROOT` | `/home/sprite/<repository name>` |
-| `SPRITES_ORCA_VERSION` | The version of your Orca CLI (`orca-ide --version`), else 1.4.246 |
+| `SPRITES_ORCA_VERSION` | The version of your Orca app: `Orca.app` on macOS, the `orca-ide` package on Linux, else the Orca CLI. Else 1.4.256. Step 2 of the provisioning log says where the version came from. |
 | `SPRITES_NAME_PREFIX` | `orca` |
 | `SPRITES_BROWSER` | Off: the Sprite gets only Orca's server, from Orca's server-only build when the release has one. Set to `1` for Orca's per-workspace browser: the Sprite then installs Orca's whole desktop app, which takes about a minute longer. |
 
@@ -74,6 +74,9 @@ headers, so the pairing code is the credential: keep it private. See
 
 ## Troubleshooting
 
+- **The Sprite runs a different Orca version from your desktop.** Step 2 of the provisioning log
+  says where the version came from. If it says the recipe's default, the recipe could not find
+  your Orca app or CLI. Set `SPRITES_ORCA_VERSION` to the version in Orca > About Orca.
 - **A workspace failed and the Sprite is still there.** The recipe destroys the Sprite when
   `create` fails, but if you cancel a workspace while it is being created, Orca may stop the
   recipe before that finishes. List leftovers with `sprite list --prefix orca-` and remove

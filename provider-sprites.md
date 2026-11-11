@@ -80,8 +80,14 @@ inside `$(...)` is not used: bash 3.2 misparses an apostrophe in one.
 
 There is no state file. `create` takes its settings from what the desktop already knows: the
 local repository (its checked-out branch, its `origin` remote and `origin/HEAD`), the desktop
-Orca CLI's version, and the `sprite` CLI's default organization. Orca sets `ORCA_REPO_URL`, `ORCA_REPO_REF` and `ORCA_VERSION` only for
-`provisioned-root` recipes, or not at all, so the recipe does not rely on them. `SPRITES_*` variables override each one; see the README. The
+Orca app's version, and the `sprite` CLI's default organization. Orca sets `ORCA_REPO_URL` and `ORCA_REPO_REF` only for
+`provisioned-root` recipes, and as of 1.4.256 passes `ORCA_VERSION` empty, so the recipe does not
+rely on them. `create` reads the Orca version itself: from the `Orca.app` that runs
+the recipe (found through its parent processes), else `/Applications/Orca.app`,
+`~/Applications/Orca.app` or Spotlight, checking the bundle ID `com.stablyai.orca`; on Linux from
+the installed `orca-ide` package; then from the `orca` or `orca-ide` CLI, on `PATH` or in its usual
+places. Most people have no Orca CLI, and an Orca started from the Dock has no `/usr/local/bin` on
+`PATH`, so the app comes first. Step 2 of the provisioning log names the source. `SPRITES_*` variables override each one; see the README. The
 lifecycle phases take the Sprite name and organization from `userData` in the payload.
 
 Prerequisites on the desktop: the `sprite` CLI logged in to the org (`sprite login`, or

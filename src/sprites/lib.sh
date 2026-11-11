@@ -11,7 +11,7 @@
 # Optional overrides, read from the environment Orca was started from:
 #   SPRITES_ORG            Sprites organization (default: the sprite CLI's default org)
 #   SPRITES_PROJECT_ROOT   checkout path on the Sprite (default: /home/sprite/<repo name>)
-#   SPRITES_ORCA_VERSION   orca-ide version to install (default: the desktop Orca CLI's version)
+#   SPRITES_ORCA_VERSION   Orca version to install (default: the desktop Orca app's version)
 #   SPRITES_NAME_PREFIX    Sprite name prefix (default: orca)
 #   SPRITES_BROWSER        1: install Orca's whole desktop package, which the per-workspace
 #                          browser needs (about a minute slower). Default: Orca's server-only
@@ -33,20 +33,46 @@ org="${SPRITES_ORG:-}"
 repo_dir="" repo_url="" repo_ref="" origin_head="" project_root=""
 name_prefix="${SPRITES_NAME_PREFIX:-orca}"
 server_base="${SPRITES_SERVER_BASE:-}"
-# Orca does not pass its version to recipes, so ask the desktop's Orca CLI, then fall back
-# to the version this recipe was tested with.
-detect_orca_version() {
-  local v="" cli
-  for cli in orca-ide orca; do
-    command -v "$cli" >/dev/null 2>&1 || continue
-    v="$("$cli" --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
-    [ -z "$v" ] || break
-  done
-  printf '%s' "${v:-1.4.246}"
+# resolve_orca_version (create only): sets orca_version, the Orca release to install, and
+# orca_version_from, where it came from, for the log. Orca 1.4.256 passes ORCA_VERSION empty, so
+# read the desktop Orca's version: on macOS from the Orca.app running this recipe, else an
+# installed Orca.app; on Linux from the orca-ide package; then Orca's CLI; else a tested default.
+orca_app_version() {  # <Orca.app>: its version, if it is Orca's bundle
+  local pb=/usr/libexec/PlistBuddy plist="$1/Contents/Info.plist"
+  [ "$("$pb" -c 'Print :CFBundleIdentifier' "$plist" 2>/dev/null)" = com.stablyai.orca ] \
+    && "$pb" -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null
 }
-orca_version="${SPRITES_ORCA_VERSION:-${ORCA_VERSION:-}}"
-[ -n "$orca_version" ] || orca_version="$(detect_orca_version)"
-orca_version="${orca_version#v}"
+resolve_orca_version() {
+  local v="${SPRITES_ORCA_VERSION:-${ORCA_VERSION:-}}" pid="$$" n=0 exe app="" cli clis="orca-ide"
+  orca_version_from="${SPRITES_ORCA_VERSION:+SPRITES_ORCA_VERSION}"
+  [ -z "$v" ] || orca_version_from="${orca_version_from:-Orca}"
+  if [ -z "$v" ] && [ "$(uname -s)" = Darwin ]; then
+    clis="orca orca-ide /usr/local/bin/orca /opt/homebrew/bin/orca"
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ $((n += 1)) -le 32 ]; do
+      exe="$(ps -o comm= -p "$pid" 2>/dev/null || true)"
+      case "$exe" in /*.app/*) app="${exe%%.app/*}.app"; break ;; esac
+      pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+    done
+    for app in ${app:+"$app"} /Applications/Orca.app "$HOME/Applications/Orca.app" mdfind; do
+      [ "$app" != mdfind ] || app="$(mdfind 'kMDItemCFBundleIdentifier == com.stablyai.orca' 2>/dev/null | head -n 1 || true)"
+      [ -n "$app" ] && v="$(orca_app_version "$app" || true)" && [ -n "$v" ] && { orca_version_from="the Orca app"; break; }
+    done
+  elif [ -z "$v" ]; then
+    v="$({ dpkg-query -W -f '${Status} ${Version}\n' orca-ide | sed -n 's/^install ok installed //p'; rpm -q --qf '%{VERSION}\n' orca-ide; } 2>/dev/null \
+      | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
+    [ -z "$v" ] || orca_version_from="the orca-ide package"
+  fi
+  if [ -z "$v" ]; then
+    for cli in $clis "$HOME/.local/bin/orca-ide"; do
+      command -v "$cli" >/dev/null 2>&1 || continue
+      v="$("$cli" --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
+      [ -z "$v" ] || { orca_version_from="the Orca CLI"; break; }
+    done
+  fi
+  orca_version="${v:-1.4.256}"; orca_version="${orca_version#v}"
+  [ -n "$v" ] || orca_version_from="the recipe default: no Orca app or CLI found"
+}
+orca_version="" orca_version_from=""
 case "${SPRITES_BROWSER:-0}" in
   1|true|yes) install_mode=full ;;
   0|false|no|"") install_mode=fast ;;
@@ -133,7 +159,8 @@ resolve_repo() {
   base="$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '-')"
   project_root="${SPRITES_PROJECT_ROOT:-/home/sprite/${base:-project}}"
   case "$project_root" in /*) ;; *) die "SPRITES_PROJECT_ROOT must be an absolute path on the Sprite: $project_root" ;; esac
-  for v in repo_url repo_ref origin_head project_root orca_version server_base; do check_env_value "$v" "${!v}"; done
+  resolve_orca_version
+  for v in repo_url repo_ref origin_head project_root orca_version orca_version_from server_base; do check_env_value "$v" "${!v}"; done
 }
 
 # make_bundle <file>: bundle the local branches, origin's branches and tags, so the Sprite
@@ -232,7 +259,7 @@ head -c "$BUNDLE_SIZE" > "$BUNDLE_FILE"
 [ "$(wc -c < "$BUNDLE_FILE")" = "$BUNDLE_SIZE" ] \
   || { echo "[sprites] error: the repository arrived incomplete ($(wc -c < "$BUNDLE_FILE") of $BUNDLE_SIZE bytes); try again" >&2; false; }
 bundle_secs=$SECONDS
-echo "[sprites] [2/5] Installing Orca $ORCA_VERSION on the Sprite" >&2
+echo "[sprites] [2/5] Installing Orca $ORCA_VERSION on the Sprite (version from $ORCA_VERSION_FROM)" >&2
 SECONDS=0
 installed=""
 if [ "${ORCA_INSTALL:-fast}" = fast ]; then
@@ -453,7 +480,7 @@ build_sprite() {
   local name="$1"
   local out
   out="$(sp config update --url-auth public "$name" 2>&1)" || { printf '%s\n' "$out" >&2; die "could not give Sprite $name a public URL"; }
-  with_checkout "$name" "${server_base:+ORCA_SERVER_BASE=$server_base,}ORCA_VERSION=$orca_version,ORCA_INSTALL=$install_mode,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_ORIGIN_HEAD=$origin_head,ORCA_PROJECT_ROOT=$project_root" \
+  with_checkout "$name" "${server_base:+ORCA_SERVER_BASE=$server_base,}ORCA_VERSION=$orca_version,ORCA_VERSION_FROM=$orca_version_from,ORCA_INSTALL=$install_mode,ORCA_REPO_URL=$repo_url,ORCA_REPO_REF=$repo_ref,ORCA_ORIGIN_HEAD=$origin_head,ORCA_PROJECT_ROOT=$project_root" \
     bash -lc "$remote_build" >&2
 }
 
