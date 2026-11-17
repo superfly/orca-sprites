@@ -18,7 +18,10 @@ const include = /^\. "\$\(dirname "\$0"\)\/lib\.sh".*$/m
 function phase(name) {
   const body = src(`${name}.sh`)
   if (!include.test(body)) throw new Error(`${name}.sh does not source lib.sh`)
-  const script = body.replace(/^#!.*\n/, '').replace(include, () => lib.trimEnd()).trimEnd()
+  // Whole-line comments are dropped to stay under MAX; the sources have no heredocs or
+  // multi-line strings with a line that starts with #, other than shell run on the Sprite.
+  const script = body.replace(/^#!.*\n/, '').replace(include, () => lib.trimEnd())
+    .replace(/^[ \t]*#.*\n/gm, '').replace(/\n{3,}/g, '\n\n').trimEnd()
   // A single-quoted argument, with each ' written as '\''. Not a heredoc inside $(...):
   // macOS /bin/sh is bash 3.2, which misparses an apostrophe in a heredoc there.
   const command = `bash -c '${script.replace(/'/g, "'\\''")}' sprites-${name}`

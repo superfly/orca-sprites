@@ -195,6 +195,20 @@ sanitize_name() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed -E 's/-+/-/g; s/^-//; s/-$//'
 }
 
+# sprite_name_for <instance id> [recipe id]: the Sprite name create gives an Orca VM instance.
+# Sprite names are at most 55 characters, and Orca's ORCA_VM_INSTANCE_ID is a UUID, so the name
+# carries a 12-character hash of the instance id rather than the id itself. destroy uses this to
+# find a Sprite whose create never returned a result.
+sprite_name_for() {
+  local recipe_id hash max name
+  recipe_id="$(sanitize_name "${2:-${ORCA_RECIPE_ID:-sprites}}")"
+  hash="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0, 12))' "$1")"
+  max=$((55 - ${#hash} - 1))
+  name="$(sanitize_name "$(printf '%s' "$name_prefix-$recipe_id" | cut -c1-"$max")-$hash")"
+  [ "${#name}" -le 55 ] || die "Sprite name too long: $name"
+  printf '%s' "$name"
+}
+
 # sprite_url <name>: the Sprite's URL, empty if there is no such Sprite. Fails if the list
 # call fails, so an expired login is never mistaken for "no Sprite".
 sprite_url() {
@@ -509,6 +523,15 @@ emit_result() {
     console.log(JSON.stringify({ ...r, schemaVersion: 1,
       userData: { ...(r.userData || {}), provider: "sprites", resourceId: name, org } }));
   ' "$1" "$2" "$org"
+}
+
+# payload_top <payload> <key>: a top-level field of the lifecycle payload (instanceId, recipeId).
+payload_top() {
+  node -e '
+    const d = JSON.parse(process.argv[1] || "{}");
+    const v = d[process.argv[2]];
+    process.stdout.write(typeof v === "string" ? v : "");
+  ' "$1" "$2"
 }
 
 # payload_value <payload> <userData key>: read the lifecycle payload Orca sends on stdin.
