@@ -10,9 +10,15 @@ if [ -z "$name" ]; then
   # the VM listed so it can be removed. Find the Sprite by the name create gives this instance.
   instance_id="$(payload_top "$payload" instanceId)"; instance_id="${instance_id:-${ORCA_VM_INSTANCE_ID:-}}"
   [ -n "$instance_id" ] || die "the lifecycle payload has neither userData.resourceId nor an instance id, so there is no way to tell which Sprite to destroy"
-  name="$(sprite_name_for "$instance_id" "$(payload_top "$payload" recipeId)")"
-  log "create never returned a result for this VM; destroying the Sprite create names after it: $name in $org"
-  log "if the Sprite was made with another SPRITES_NAME_PREFIX or organization, look there for a name that ends in -${name##*-}"
+  recorded="$(registry_instance "$instance_id")"
+  if [ -n "$recorded" ]; then
+    name="${recorded%% *}"; org="${recorded#* }"
+    log "create never returned a result for this VM; destroying the Sprite it recorded: $name in $org"
+  else
+    name="$(sprite_name_for "$instance_id" "$(payload_top "$payload" recipeId)")"
+    log "create never returned a result for this VM; destroying the Sprite create names after it: $name in $org"
+    log "if the Sprite was made with another SPRITES_NAME_PREFIX or organization, look there for a name that ends in -${name##*-}"
+  fi
 fi
 destroy_sprite "$name"
 printf '{"ok":true}\n'

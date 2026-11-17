@@ -15,7 +15,7 @@
   "license": "MIT",
   "homepage": "https://fly.io/sprites",
   "engines": {
-    "orca": ">=1.4.248"
+    "orca": ">=1.4.259"
   },
   "pluginApi": 1,
   "main": "worker/main.mjs",
@@ -23,6 +23,30 @@
     "vmRecipes": [
       {
         "path": "recipes/sprites.json"
+      }
+    ],
+    "panels": [
+      {
+        "id": "sprites",
+        "title": "Sprites",
+        "icon": "cloud",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ],
+    "commands": [
+      {
+        "id": "sprites.show",
+        "title": "Sprites: Show this workspace's Sprite"
+      },
+      {
+        "id": "sprites.checkpoint",
+        "title": "Sprites: Checkpoint this workspace's Sprite"
+      }
+    ],
+    "events": [
+      {
+        "on": "workspace.changed"
       }
     ],
     "settings": [
@@ -74,13 +98,20 @@
         "id": "sprites",
         "text": "Sprites",
         "icon": "cloud",
-        "tooltip": "Fly.io Sprites"
+        "tooltip": "Fly.io Sprites",
+        "command": "sprites.show"
       }
     ]
   },
   "capabilities": [
     {
       "kind": "settings:own"
+    },
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "notifications:show"
     }
   ],
   "cover": {

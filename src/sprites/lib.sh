@@ -262,12 +262,63 @@ sprite_url() {
 destroy_sprite() {
   local name="$1" out rc=0
   out="$(sp destroy --force "$name" 2>&1)" || rc=$?
-  [ "$rc" = 0 ] && { log "destroyed Sprite $name"; return 0; }
+  [ "$rc" = 0 ] && { log "destroyed Sprite $name"; forget_sprite "$name"; return 0; }
   printf '%s\n' "$out" | { grep -v -e '^[[:space:]]*$' -e 'About to destroy' || true; } >&2
-  case "$out" in *"sprite not found"*) log "$name is already gone"; return 0 ;; esac
+  case "$out" in *"sprite not found"*) log "$name is already gone"; forget_sprite "$name"; return 0 ;; esac
   log "could not destroy $name; destroy it by hand: sprite -o $org destroy --force $name"
   return 1
 }
+
+# The plugin's worker and panel find each workspace's Sprite in this folder: one JSON file per
+# Sprite this computer created. Losing an entry only hides the Sprite from the panel.
+registry_dir="${SPRITES_REGISTRY_DIR:-$HOME/.config/orca-sprites/sprites}"
+
+# record_sprite <name> <url> [created]: note a Sprite and the workspace it is for. create passes
+# "created"; resume records Sprites made before the registry existed, and reopens the worker's
+# window to link an entry no workspace has been linked to yet. An entry the worker has linked is
+# never changed. No network.
+record_sprite() {
+  ( umask 077; mkdir -p "$registry_dir" ) 2>/dev/null || return 0
+  node -e '
+    const fs = require("node:fs"), [dir, name, org, url, created] = process.argv.slice(1), e = process.env;
+    const file = `${dir}/${name}.json`, now = Date.now();
+    let entry = null;
+    try { entry = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+    if (entry && entry.workspaceId) process.exit(0);
+    entry = entry || { name, org, url: url || null, instanceId: e.ORCA_VM_INSTANCE_ID || null,
+      recipeId: e.ORCA_RECIPE_ID || null, projectId: e.ORCA_PROJECT_ID || null,
+      repoPath: e.ORCA_REPO_PATH || null, projectFolder: e.SPRITES_PROJECT_FOLDER || null,
+      createdAt: created ? now : null };
+    entry.workspaceName = entry.workspaceName || e.ORCA_WORKSPACE_NAME || null;
+    entry.url = entry.url || url || null;
+    entry.projectFolder = entry.projectFolder || e.SPRITES_PROJECT_FOLDER || null;
+    entry.recordedAt = now;
+    const tmp = `${file}.${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify(entry, null, 2) + "\n", { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  ' "$registry_dir" "$1" "$org" "$2" "${3:-}" 2>/dev/null || log "could not record $1 in $registry_dir"
+}
+
+# registry_instance <instance id>: "<name> <org>" of the Sprite create recorded for this Orca
+# instance, or nothing. destroy uses it when create never returned, so a change of org or name
+# prefix in Settings since then cannot hide the Sprite.
+registry_instance() {
+  node -e '
+    const fs = require("node:fs"), [dir, id] = process.argv.slice(1);
+    let files = []; try { files = fs.readdirSync(dir).filter((f) => f.endsWith(".json")); } catch {}
+    for (const f of files) {
+      try {
+        const e = JSON.parse(fs.readFileSync(`${dir}/${f}`, "utf8"));
+        if (e.instanceId === id && /^[a-z0-9][a-z0-9-]{0,62}$/.test(e.name) && /^[A-Za-z0-9._-]+$/.test(e.org || "")) {
+          process.stdout.write(`${e.name} ${e.org}`); break;
+        }
+      } catch {}
+    }
+  ' "$registry_dir" "$1" 2>/dev/null || true
+}
+
+# forget_sprite <name>: drop a destroyed Sprite from the registry. Never fails the caller.
+forget_sprite() { rm -f "$registry_dir/$1.json" 2>/dev/null || true; }
 
 # with_checkout <sprite> <env K=V,...> <cmd...>: run a command with the repository bundle on
 # its stdin and the git identity uploaded at $IDENTITY_FILE. The bundle goes over stdin
@@ -597,6 +648,9 @@ serve_sprite() {
   url="$(sprite_url "$name")"; [ -n "$url" ] || die "no URL for Sprite $name"
   step 4 "Starting Orca on the Sprite"
   rexec "$name" --env "$(remote_env "$url")" -- bash -lc "$remote_serve"
+  # The project folder as Orca names it: the checkout folder, without a trailing / or .git.
+  local folder="${project_root%/}"; folder="${folder##*/}"; folder="${folder%.git}"
+  SPRITES_PROJECT_FOLDER="$folder" record_sprite "$name" "$url" created
   step_done
   log "[5/5] Ready in $(( $(date +%s) - create_started ))s: $url"
   log "Next: sign Claude in on this Sprite. Settings > Host: this workspace's VM > Accounts > Claude > Add Account"

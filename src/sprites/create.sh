@@ -23,6 +23,8 @@ cleanup() {
 }
 trap cleanup EXIT
 new_sprite "$name"
+# Record it now, with this instance id, so destroy can find it even if create never returns.
+record_sprite "$name" "" created
 
 build_sprite "$name"
 recipe_json="$(serve_sprite "$name")"
