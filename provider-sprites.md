@@ -248,9 +248,12 @@ Pass the full `wss://` URL to `--pairing-address`. A host name alone gives
   successful destroy.
 - **Sprite names are at most 55 characters.** Orca's `ORCA_VM_INSTANCE_ID` is a UUID, so the
   name carries a 12-character hash of it instead.
-- **Claude Code first-run prompts.** The build step skips onboarding and the serve step marks
-  the project folder as trusted. With Orca's default Yolo mode, Claude Code still asks once to
-  accept `--dangerously-skip-permissions`; the recipe leaves that choice to the user.
+- **Claude Code first-run prompts.** The build step skips onboarding and the auto-mode question
+  (`hasSeenAutoDefaultNudge` in `~/.claude.json`), and the serve step marks the project folder as
+  trusted. When the Sprite image already makes bypass permissions the default and
+  `~/.claude/settings.json` does not set `skipDangerousModePermissionPrompt`, the build step sets
+  it, so the bypass warning does not stop a session Orca launches. With any other default it
+  leaves the setting alone, and the warning still appears once.
 - `sprite exec` returns the remote exit code.
 - `sprite exec --env` takes `KEY=value,KEY2=value2`, so values must not contain commas. The
   scripts refuse such values.
