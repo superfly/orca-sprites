@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
+import { checkpoint, cliEnv, forgetEntry, readRegistry, resolveSprite, spriteStates } from './sprites.mjs'
 
 /** Settings keys, and the recipe variable each one sets. */
 export const SETTINGS = {
@@ -123,7 +124,72 @@ export async function writeSettingsFile(file, content) {
 
 /** How often to read PATH from the login shell again, so a newly installed CLI is found. */
 export const PATH_REFRESH_MS = 10 * 60 * 1000
+/** How often the status bar item asks for the focused workspace's Sprite state. */
+export const STATUS_REFRESH_MS = 60 * 1000
 let refreshTimer = null
+let statusTimer = null
+
+/** Longest common start of the names, to list them in one `sprite list --prefix` call. */
+export function commonPrefix(names) {
+  if (names.length === 0) return ''
+  let prefix = names[0]
+  for (const name of names) {
+    while (!name.startsWith(prefix)) prefix = prefix.slice(0, -1)
+  }
+  return prefix
+}
+
+const asleep = (status) => status === 'warm' || status === 'cold' || status === 'suspended'
+export const describe = (status) => (status === 'running' ? 'awake' : asleep(status) ? 'asleep' : status)
+
+/** The ids of every workspace Orca lists, which are never on a recipe VM. */
+async function localIds(orca) {
+  const { workspaces } = await orca.host.call('workspace.list', {})
+  return workspaces.map((row) => row.id)
+}
+
+/** Every Sprite this computer created, with its state and the workspace it was made for. */
+export async function listSprites(orca) {
+  const entries = await readRegistry()
+  const env = await cliEnv(settingsFile())
+  const states = {}
+  const failed = new Set()
+  let error = null
+  await Promise.all(
+    [...new Set(entries.map((entry) => entry.org))].map(async (org) => {
+      const names = entries.filter((entry) => entry.org === org).map((entry) => entry.name)
+      try {
+        Object.assign(states, await spriteStates(org, commonPrefix(names), env))
+      } catch (e) {
+        failed.add(org)
+        error = e.message
+      }
+    })
+  )
+  const sprites = entries.map((entry) => ({
+    name: entry.name,
+    org: entry.org,
+    url: states[entry.name]?.url ?? entry.url ?? null,
+    // Gone only when its org listed fine and it was not there.
+    status: states[entry.name]?.status ?? (failed.has(entry.org) ? 'unknown' : 'gone'),
+    workspace: entry.workspaceLabel ?? entry.workspaceName ?? null,
+    createdAt: entry.createdAt ?? null
+  }))
+  return { sprites, error }
+}
+
+/** The focused workspace's Sprite entry, or a sentence saying why there is none. */
+async function focusedSprite(orca, context) {
+  context = context === undefined ? await orca.host.call('workspace.readContext', {}) : context
+  if (!context) return { why: 'No workspace is open.' }
+  const entry = await resolveSprite(context, await localIds(orca))
+  if (!entry) {
+    return {
+      why: `Could not match ${context.displayName} to a Sprite recorded on this computer. If it runs on a Sprite, suspend and resume the workspace, then open it again.`
+    }
+  }
+  return { entry, context }
+}
 
 /** @type {import('orca/worker').Activate} */
 export default async function activate(orca) {
@@ -157,6 +223,118 @@ export default async function activate(orca) {
     }
   }
 
+  // Orca does not show what a command returns, so commands answer with a notification too.
+  const notify = (title, body) => orca.host.call('notifications.show', { title, body }).catch(() => {})
+
+  // A checkpoint can take minutes on a sleeping Sprite, longer than Orca waits for a command or
+  // a panel request. So it runs in the background and reports when it is done.
+  const running = new Set()
+  let runs = 0
+  const startCheckpoint = (entry, label) => {
+    if (running.has(entry.name)) return null
+    running.add(entry.name)
+    const run = ++runs
+    void (async () => {
+      let message
+      let ok = true
+      try {
+        message = await checkpoint(entry, `Orca: ${label}`, await cliEnv(settingsFile()))
+      } catch (error) {
+        ok = false
+        message = error.message
+      }
+      // Report to the panel in the same step that frees the name, so the event of this run can
+      // never clear the spinner of a checkpoint started after it.
+      running.delete(entry.name)
+      try {
+        orca.panels.post('sprites.checkpointed', { name: entry.name, run, ok, message })
+      } catch {}
+      await notify(ok ? `Checkpointed ${label}` : `Checkpoint failed for ${label}`, `${entry.name}: ${message}`)
+    })()
+    return run
+  }
+
+  orca.commands.register('sprites.show', async () => {
+    const { entry, why } = await focusedSprite(orca)
+    if (!entry) {
+      await notify('No Sprite', why)
+      return why
+    }
+    let text
+    try {
+      const state = (await spriteStates(entry.org, entry.name, await cliEnv(settingsFile())))[entry.name]
+      text = state ? `${describe(state.status)} · ${state.url ?? 'no URL'}` : `gone from ${entry.org}`
+    } catch (error) {
+      text = error.message
+    }
+    await notify(`Sprite ${entry.name}`, text)
+    return `${entry.name}: ${text}`
+  })
+  orca.commands.register('sprites.checkpoint', async () => {
+    const { entry, context, why } = await focusedSprite(orca)
+    if (!entry) {
+      await notify('No Sprite', why)
+      return why
+    }
+    const started = startCheckpoint(entry, context.displayName) !== null
+    const text = started ? `Checkpointing ${entry.name}…` : `A checkpoint of ${entry.name} is already running.`
+    await notify(text, 'You get a notification when it is done.')
+    return text
+  })
+  // The panel also learns which checkpoints are running, so a spinner whose result never came
+  // (the worker restarted, say) clears on the next refresh.
+  orca.panels.handle('sprites.list', async () => ({ ...(await listSprites(orca)), checkpointing: [...running] }))
+  orca.panels.handle('sprites.checkpoint', async ({ name }) => {
+    const entry = (await readRegistry()).find((e) => e.name === name)
+    if (!entry) throw new Error(`no Sprite named ${name} was created on this computer`)
+    const run = startCheckpoint(entry, entry.workspaceLabel ?? entry.workspaceName ?? entry.name)
+    return { started: run !== null, run }
+  })
+  // Forget only a Sprite that is really gone: its org listed fine and it was not there.
+  orca.panels.handle('sprites.forget', async ({ name }) => {
+    const entry = (await readRegistry()).find((e) => e.name === name)
+    if (!entry) return { forgotten: false }
+    const states = await spriteStates(entry.org, entry.name, await cliEnv(settingsFile()))
+    if (states[entry.name]) throw new Error(`${name} still exists in ${entry.org}`)
+    await forgetEntry(name)
+    return { forgotten: true }
+  })
+
+  // The status bar item shows the focused workspace's Sprite, and hides for other workspaces.
+  // workspace.changed also fires when terminals open or close, so runs can overlap: only the
+  // newest one may update the item.
+  let focused = null
+  let generation = 0
+  const showStatus = async () => {
+    const mine = ++generation
+    const found = focused ? await focusedSprite(orca, focused).catch(() => ({})) : {}
+    if (mine !== generation) return
+    if (!found.entry) {
+      await orca.host.call('statusBar.update', { id: 'sprites', visible: false }).catch(() => {})
+      return
+    }
+    let status = 'unknown'
+    try {
+      status = (await spriteStates(found.entry.org, found.entry.name, await cliEnv(settingsFile())))[found.entry.name]?.status ?? 'gone'
+    } catch {}
+    if (mine !== generation) return
+    await orca.host
+      .call('statusBar.update', {
+        id: 'sprites',
+        visible: true,
+        text: `Sprite ${describe(status)}`,
+        tone: status === 'running' ? 'success' : status === 'gone' ? 'danger' : 'neutral',
+        tooltip: `${found.entry.name} in ${found.entry.org}. Click for its URL.`
+      })
+      .catch(() => {})
+  }
+  orca.events.on('workspace.changed', ({ context }) => {
+    focused = context
+    void showStatus()
+  })
+  statusTimer = setInterval(() => void showStatus(), STATUS_REFRESH_MS)
+  statusTimer.unref?.()
+
   orca.settings.onDidChange(() => {
     sync()
     void refreshPath()
@@ -169,8 +347,9 @@ export default async function activate(orca) {
 }
 
 export function deactivate() {
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
+  for (const timer of [refreshTimer, statusTimer]) {
+    if (timer) clearInterval(timer)
   }
+  refreshTimer = null
+  statusTimer = null
 }

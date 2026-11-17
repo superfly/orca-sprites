@@ -59,10 +59,19 @@ scoped to one Sprite's URL would change this trade-off.
 
 ## Packaging: an Orca plugin
 
-The recipe ships as a **declarative** Orca plugin: `orca-plugin.json` contributes
+The recipe ships in a **trusted-worker** Orca plugin: `orca-plugin.json` contributes
 `recipes/sprites.json` through `contributes.vmRecipes`, so Sprites appears under Run on for
-every repository and nothing is copied into repos. Orca asks once to approve the recipe's
-commands; there is no plugin worker and no host-API capability.
+every repository and nothing is copied into repos. The plugin also has a worker
+(`worker/main.mjs`), a Sprites panel, two commands and a status bar item, and asks for
+`settings:own`, `workspace:read` and `notifications:show`. Orca asks once to approve that.
+
+What Orca 1.4.261 gives the worker, found on a real desktop:
+- `workspace.list` lists local and SSH workspaces only, not workspaces on a recipe VM, and
+  `workspace.created` does not fire for them. `workspace.readContext` (and `workspace.changed`)
+  does describe a focused VM workspace: its id, name and branch.
+- The worker's environment has no `SPRITE_TOKEN` and no `SHELL`, so it uses the `sprite` CLI's
+  saved login and reads the login shell from the user database.
+- Orca does not show what a command returns, so commands answer with a notification.
 
 A plugin recipe must be self-contained (each command is a string of at most 32 KiB), so
 `scripts/build.mjs` inlines `src/sprites/lib.sh` into each phase and wraps it as
@@ -74,14 +83,18 @@ inside `$(...)` is not used: bash 3.2 misparses an apostrophe in one.
 | Source | Does |
 |---|---|
 | `src/sprites/lib.sh` | Settings (environment, then the worker's settings file), the `sprite` wrappers and the remote fragments |
+| `worker/sprites.mjs` | Links the focused workspace to its Sprite (once by the folder name at the end of its id, then by that exact id from `workspace.readContext`), and runs the `sprite` CLI |
+| `src/panel.tsx` | The Sprites panel; `src/protocol.ts` is its contract with the worker |
 | `worker/main.mjs` | The plugin's worker: copies the plugin's Settings and your login shell's `PATH` to `~/.config/orca-sprites/settings.json` for the recipe |
 | `src/sprites/create.sh` | Builds a Sprite, starts the `orca` and `orca-awake` services, prints the recipe JSON. Destroys the Sprite if any step fails. |
 | `src/sprites/suspend.sh` | Stops the `orca` and `orca-awake` services and releases the keep-awake lease |
 | `src/sprites/resume.sh` | Starts the `orca` and `orca-awake` services, prints the saved recipe JSON |
 | `src/sprites/destroy.sh` | Destroys the Sprite. It succeeds if the Sprite is already gone. When `create` never returned a result, it names the Sprite from the instance id, as `create` did. |
 
-`create` keeps no state, apart from the plugin's Settings, which the worker copies to
-`~/.config/orca-sprites/settings.json` for the recipe. It takes the rest from what the desktop already knows: the
+`create` keeps no state of its own, apart from the plugin's Settings, which the worker copies to
+`~/.config/orca-sprites/settings.json` for the recipe, and one registry file per Sprite in
+`~/.config/orca-sprites/sprites/` (name, org, URL and the workspace name Orca gave the recipe)
+for the worker; `destroy` removes it, and `resume` adds a missing one. It takes the rest from what the desktop already knows: the
 local repository (its checked-out branch, its `origin` remote and `origin/HEAD`), the desktop
 Orca app's version, and the `sprite` CLI's default organization. Orca sets `ORCA_REPO_URL` and `ORCA_REPO_REF` only for
 `provisioned-root` recipes, and as of 1.4.256 passes `ORCA_VERSION` empty, so the recipe does not

@@ -38,7 +38,8 @@ Sprite.
 ## Install
 
 1. Install the [`sprite` CLI](https://docs.fly.io/sprites) and run `sprite login`, or export
-   `SPRITE_TOKEN`. You also need `node` and `git`.
+   `SPRITE_TOKEN`. You also need `node` and `git`. The plugin's panel and status bar need the
+   saved login from `sprite login`.
 2. In Orca, open **Settings → Plugins → Add plugin → From a Git URL…**, enter
    `https://github.com/superfly/orca-sprites`, then **Continue** and **Install**. Orca asks
    you to confirm that you trust the publisher. Then turn the plugin on, and approve its access.
@@ -72,9 +73,31 @@ network and `sprite` login. The recipe that creates Sprites already did that, in
 of this plugin: it runs shell commands as you to call the `sprite` CLI and send your repository.
 So the worker adds no new access to your computer.
 
-Inside Orca, the plugin asks only to read and change its own settings. It does not ask to type
-into terminals, start agents or change workspaces, and Orca checks those on every call. The code is in this
+Inside Orca, the plugin asks only to read and change its own settings, to read your workspace
+names and branches (to find each workspace's Sprite), and to show notifications. It does not ask
+to type into terminals, start agents or change workspaces, and Orca checks those on every call. The code is in this
 repository: [`worker/`](worker) and [`src/sprites/`](src/sprites).
+## In Orca
+
+- **Sprites panel** (cloud icon in the right sidebar): the Sprites this computer created or
+  resumed for Orca (see below), whether each is awake or asleep, and the workspace it was made for, with **Open URL** and
+  **Checkpoint** buttons. A Sprite destroyed outside Orca shows as "gone", with **Forget**.
+- **Status bar:** for a workspace on a Sprite, whether its Sprite is awake or asleep. Click it
+  for a notification with the Sprite's name and URL. It is hidden for other workspaces.
+- **Commands** (command palette): *Sprites: Show this workspace's Sprite* and *Sprites:
+  Checkpoint this workspace's Sprite*. They answer with a desktop notification. A checkpoint
+  saves the Sprite's disk and can take a minute on a sleeping Sprite; a second notification says
+  when it is done. List checkpoints with `sprite -o <org> -s <name> checkpoint list` and restore
+  one with `sprite -o <org> -s <name> restore <id>`.
+
+The panel, status bar and commands use the `sprite` CLI's saved login, from `sprite login` (or
+`sprite auth setup --token <token>`): Orca does not pass `SPRITE_TOKEN` to plugins. They know
+the Sprites this computer created or resumed since the plugin gained this panel: the recipe records each
+one in `~/.config/orca-sprites/sprites/`, and `destroy` removes it. The worker ties a Sprite to
+its workspace the first time you open that workspace within two hours of creating or resuming
+it: by the workspace's folder name on the Sprite (and the repository's folder name above it), and
+only when no other recent Sprite has that name. From then on it uses the workspace's id. If the status bar shows nothing for a workspace
+on a Sprite, suspend and resume the workspace, then open it again.
 
 ## Settings
 
