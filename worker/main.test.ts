@@ -6,7 +6,7 @@ import { join } from 'node:path'
 const dir = mkdtempSync(join(tmpdir(), 'orca-sprites-'))
 process.env.SPRITES_SETTINGS_FILE = join(dir, 'nested', 'settings.json')
 // A shell that prints noise around PATH, as an interactive login shell can.
-process.env.SHELL = '/bin/sh'
+process.env.SPRITES_LOGIN_SHELL = '/bin/sh'
 
 const read = () => JSON.parse(readFileSync(process.env.SPRITES_SETTINGS_FILE as string, 'utf8'))
 
@@ -42,11 +42,11 @@ test('keeps only absolute PATH entries', async () => {
 test('keeps the saved PATH when the login shell does not answer', async () => {
   const { writeSettingsFile, settingsFile } = await import('./main.mjs')
   await writeSettingsFile(settingsFile(), { PATH: '/saved/bin:/usr/bin' })
-  process.env.SHELL = '/bin/false'
+  process.env.SPRITES_LOGIN_SHELL = '/bin/false'
   const worker = await import('./main.mjs')
   await mountWorker(worker, { host: mockHost({ capabilities: ['settings:own'], settings: {} }) })
   assert.equal(read().PATH, '/saved/bin:/usr/bin')
-  process.env.SHELL = '/bin/sh'
+  process.env.SPRITES_LOGIN_SHELL = '/bin/sh'
 })
 
 test('a login shell that waits for input does not hang', async () => {

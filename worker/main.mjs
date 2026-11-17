@@ -1,13 +1,14 @@
 // The plugin's worker. The Sprites recipe runs as shell commands that cannot read plugin
 // settings, so the worker writes them, with the PATH of your login shell, to a file the recipe
-// reads: ~/.config/orca-sprites/settings.json (SPRITES_SETTINGS_FILE overrides the path).
+// reads: ~/.config/orca-sprites/settings.json (SPRITES_SETTINGS_FILE overrides the path, for
+// tests only: Orca does not pass it to the worker, so setting it where Orca starts does nothing).
 // The status bar item keeps this worker running while the plugin is on, so a change made in
 // Settings reaches the file at once.
 
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
 
 /** Settings keys, and the recipe variable each one sets. */
@@ -45,22 +46,59 @@ export function absolutePath(path) {
   return dirs.length > 0 ? [...new Set(dirs)].join(':') : null
 }
 
+/** The person's login shell. Orca does not pass SHELL to plugin workers, so read it from the
+ *  user database. SPRITES_LOGIN_SHELL is for tests. */
+export function loginShell() {
+  if (process.env.SPRITES_LOGIN_SHELL) return process.env.SPRITES_LOGIN_SHELL
+  try {
+    const shell = userInfo().shell
+    if (shell && shell.startsWith('/')) return shell
+  } catch {}
+  return process.env.SHELL || '/bin/zsh'
+}
+
 /** PATH from the person's login shell, so a recipe started by a Dock-launched Orca finds the
- *  sprite CLI and node. Null when the shell does not answer within 5 s. Interactive shells
- *  ignore SIGTERM, and an rc file may wait for input, so the shell gets no stdin and SIGKILL. */
-export function loginShellPath(shell = process.env.SHELL || '/bin/zsh') {
+ *  sprite CLI and node. Null when the shell does not answer within 5 s.
+ *  - The shell runs in its own session (detached) with no stdin or stderr, so an interactive
+ *    shell never takes over the terminal Orca was started from.
+ *  - Interactive shells ignore SIGTERM and an rc file may wait for input, so a slow shell's
+ *    whole process group gets SIGKILL. */
+export function loginShellPath(shell = loginShell()) {
   const mark = '__ORCA_SPRITES_PATH__'
   return new Promise((resolve) => {
-    const child = execFile(
-      shell,
-      ['-ilc', `printf '%s%s%s' ${mark} "$PATH" ${mark}`],
-      { timeout: 5000, killSignal: 'SIGKILL', env: { ...process.env, TERM: 'dumb' } },
-      (_error, stdout) => {
-        const match = String(stdout ?? '').match(new RegExp(`${mark}(.*?)${mark}`, 's'))
-        resolve(match ? absolutePath(match[1].trim()) : null)
-      }
-    )
-    child.stdin?.end()
+    let out = ''
+    let done = false
+    const finish = (value) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    let child
+    try {
+      child = spawn(shell, ['-ilc', `printf '%s%s%s' ${mark} "$PATH" ${mark}`], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...process.env, TERM: 'dumb' }
+      })
+    } catch {
+      return resolve(null)
+    }
+    const timer = setTimeout(() => {
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {}
+      child.stdout?.destroy()
+      finish(null)
+    }, 5000)
+    child.on('error', () => finish(null))
+    child.stdout.on('data', (chunk) => {
+      out += chunk
+    })
+    child.on('close', () => {
+      const match = out.match(new RegExp(`${mark}(.*?)${mark}`, 's'))
+      finish(match ? absolutePath(match[1].trim()) : null)
+    })
   })
 }
 

@@ -80,7 +80,9 @@ repository: [`worker/`](worker) and [`src/sprites/`](src/sprites).
 
 Everything has a default. To change one, open **Settings → Plugins → Fly.io Sprites**. A
 change applies to the next workspace you create, and keep-awake also to existing ones when
-they resume.
+they resume. Change the organization or name prefix only when no workspace is being created: a
+create that fails after that cannot be cleaned up from Orca, because Cleanup looks for the Sprite
+under the new settings. Remove it with `sprite -o <org> destroy --force <name>`.
 
 The plugin's worker copies these settings to `~/.config/orca-sprites/settings.json`, which the
 recipe reads, with the `PATH` of your login shell. So an Orca started from the Dock or a desktop

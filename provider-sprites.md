@@ -80,7 +80,8 @@ inside `$(...)` is not used: bash 3.2 misparses an apostrophe in one.
 | `src/sprites/resume.sh` | Starts the `orca` and `orca-awake` services, prints the saved recipe JSON |
 | `src/sprites/destroy.sh` | Destroys the Sprite. It succeeds if the Sprite is already gone. When `create` never returned a result, it names the Sprite from the instance id, as `create` did. |
 
-There is no state file. `create` takes its settings from what the desktop already knows: the
+`create` keeps no state, apart from the plugin's Settings, which the worker copies to
+`~/.config/orca-sprites/settings.json` for the recipe. It takes the rest from what the desktop already knows: the
 local repository (its checked-out branch, its `origin` remote and `origin/HEAD`), the desktop
 Orca app's version, and the `sprite` CLI's default organization. Orca sets `ORCA_REPO_URL` and `ORCA_REPO_REF` only for
 `provisioned-root` recipes, and as of 1.4.256 passes `ORCA_VERSION` empty, so the recipe does not
@@ -93,8 +94,10 @@ places. Most people have no Orca CLI, and an Orca started from the Dock has no `
 lifecycle phases take the Sprite name and organization from `userData` in the payload.
 
 Prerequisites on the desktop: the `sprite` CLI logged in to the org (`sprite login`, or
-`SPRITE_TOKEN` in the environment), `node` and `git`. An Orca started from the Dock or a desktop launcher does
-not see shell exports: start Orca from a terminal, or set the variables with `launchctl setenv`.
+`SPRITE_TOKEN` in the environment), `node` and `git`. The worker adds your login shell's `PATH`
+for the recipe, so a Dock-started Orca finds `sprite` and `node`. It does not see other shell
+exports, such as `SPRITE_TOKEN`: for those, start Orca from a terminal, or set them with
+`launchctl setenv`.
 
 ### The checkout comes from the desktop
 
