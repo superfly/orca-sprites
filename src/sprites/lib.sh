@@ -17,6 +17,9 @@
 #                          browser needs (about a minute slower). Default: Orca's server-only
 #                          build when the release has one, else unpack the desktop package and
 #                          run orca serve on orcad alone; either way without the browser
+#   SPRITES_KEEP_AWAKE     0: let the Sprite sleep while an agent works when no client is
+#                          connected. Default 1: a service on the Sprite keeps it awake while
+#                          Orca reports an agent as working
 #   SPRITES_SERVER_BASE    For testing: a URL to download the server-only build and its
 #                          orca-server-sha256sums.txt from, instead of the Orca release
 
@@ -73,11 +76,21 @@ resolve_orca_version() {
   [ -n "$v" ] || orca_version_from="the recipe default: no Orca app or CLI found"
 }
 orca_version="" orca_version_from=""
+# Only create rejects a bad value, so a typo never stops suspend or destroy from working.
 case "${SPRITES_BROWSER:-0}" in
   1|true|yes) install_mode=full ;;
   0|false|no|"") install_mode=fast ;;
-  *) die "SPRITES_BROWSER must be 1 or 0, not $SPRITES_BROWSER" ;;
+  *) install_mode=bad ;;
 esac
+case "${SPRITES_KEEP_AWAKE:-1}" in
+  1|true|yes|"") keep_awake=1 ;;
+  0|false|no) keep_awake=0 ;;
+  *) keep_awake=bad ;;
+esac
+check_create_settings() {
+  [ "$install_mode" != bad ] || die "SPRITES_BROWSER must be 1 or 0, not $SPRITES_BROWSER"
+  [ "$keep_awake" != bad ] || die "SPRITES_KEEP_AWAKE must be 1 or 0, not $SPRITES_KEEP_AWAKE"
+}
 # The Sprite URL routes to port 8080.
 port=8080
 service_name="orca"
@@ -449,6 +462,37 @@ case "$services_help" in *--no-stream*) create_opts+=(--no-stream) ;; esac
 sprite-env services create "$SERVICE" "${create_opts[@]}" >/dev/null
 '"$remote_wait_port"'
 wait_port
+# A Sprite sleeps soon after its last connection closes, and sleeping ends every process on
+# it. So when the desktop disconnects, an agent would stop mid-task. This second service asks
+# the Orca server every 15 s for agents it reports as working, and while there is one, keeps
+# a keep-awake lease at least 60 s ahead. It never shortens a longer lease set by hand. An agent counts only while its terminal is live and Orca has heard
+# from it in the last 30 minutes, so a crashed agent cannot keep the Sprite awake for good.
+# Agents waiting for input or permission do not count.
+sprite-env services delete "$SERVICE-awake" >/dev/null 2>&1 || true
+if [ "$KEEP_AWAKE" = 1 ] && ! sprite-env keep-awake status >/dev/null 2>&1; then
+  echo "[sprites] warning: this Sprite has no sprite-env keep-awake, so it may sleep while an agent works" >&2
+elif [ "$KEEP_AWAKE" = 1 ]; then
+  awake_script="$HOME/.orca-keep-awake.sh"
+  {
+    printf "#!/bin/bash\norca=%q jq=%q sprite_env=%q\n" "$(command -v orca-ide)" "$(command -v jq)" "$(command -v sprite-env)"
+    cat <<"AWAKE"
+while :; do
+  now="$(date +%s%3N)"
+  if timeout 10 "$orca" worktree ps --limit 500 --json 2>/dev/null | "$jq" -e --argjson now "$now" "[.result.worktrees[]?.agents[]? | select(.state == \"working\" and .hasLivePty == true and \$now - (.updatedAt // 0) < 1800000)] | length > 0" >/dev/null 2>&1 \
+    && ! timeout 10 "$sprite_env" keep-awake status 2>/dev/null | "$jq" -e --argjson now "$now" "(.keep_awake_until_ms // 0) - \$now > 60000" >/dev/null 2>&1; then
+    timeout 10 "$sprite_env" keep-awake --for 90s >/dev/null 2>&1 || true
+  fi
+  sleep 15
+done
+AWAKE
+  } > "$awake_script"
+  chmod 700 "$awake_script"
+  awake_opts=(--cmd "$awake_script" --dir "$HOME")
+  case "$services_help" in *--restart*) awake_opts+=(--restart always) ;; esac
+  case "$services_help" in *--no-stream*) awake_opts+=(--no-stream) ;; esac
+  sprite-env services create "$SERVICE-awake" "${awake_opts[@]}" >/dev/null \
+    || echo "[sprites] warning: could not start the keep-awake service; the Sprite may sleep while an agent works" >&2
+fi
 cat "$RECIPE_FILE"'
 
 # Starts the stopped service again and prints the saved recipe JSON.
@@ -457,6 +501,11 @@ remote_resume='set -euo pipefail
 sprite-env services start "$SERVICE" >/dev/null
 '"$remote_wait_port"'
 wait_port
+if [ "$KEEP_AWAKE" = 0 ]; then
+  sprite-env services stop "$SERVICE-awake" >/dev/null 2>&1 || true
+else
+  sprite-env services start "$SERVICE-awake" >/dev/null 2>&1 || true
+fi
 cat "$RECIPE_FILE"'
 
 # name_is_free <name>: fail if a Sprite with that name exists, so cleanup never touches it.
@@ -500,8 +549,8 @@ build_sprite() {
 
 remote_env() {
   local url="$1"
-  printf 'ORCA_PORT=%s,ORCA_PROJECT_ROOT=%s,ORCA_REPO_REF=%s,ORCA_PAIRING_ADDRESS=%s,SERVICE=%s,RECIPE_FILE=%s' \
-    "$port" "$project_root" "$repo_ref" "${url/https:\/\//wss://}" "$service_name" "$recipe_file"
+  printf 'ORCA_PORT=%s,ORCA_PROJECT_ROOT=%s,ORCA_REPO_REF=%s,ORCA_PAIRING_ADDRESS=%s,SERVICE=%s,RECIPE_FILE=%s,KEEP_AWAKE=%s' \
+    "$port" "$project_root" "$repo_ref" "${url/https:\/\//wss://}" "$service_name" "$recipe_file" "$keep_awake"
 }
 
 # serve_sprite <name>: start orca serve on a built Sprite and print its recipe JSON.
