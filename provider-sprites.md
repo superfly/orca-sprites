@@ -76,7 +76,7 @@ inside `$(...)` is not used: bash 3.2 misparses an apostrophe in one.
 | `src/sprites/create.sh` | Builds a Sprite, starts the `orca` service, prints the recipe JSON. Destroys the Sprite if any step fails. |
 | `src/sprites/suspend.sh` | Stops the `orca` service |
 | `src/sprites/resume.sh` | Starts the `orca` service, prints the saved recipe JSON |
-| `src/sprites/destroy.sh` | Destroys the Sprite. It succeeds if the Sprite is already gone. |
+| `src/sprites/destroy.sh` | Destroys the Sprite. It succeeds if the Sprite is already gone. When `create` never returned a result, it names the Sprite from the instance id, as `create` did. |
 
 There is no state file. `create` takes its settings from what the desktop already knows: the
 local repository (its checked-out branch, its `origin` remote and `origin/HEAD`), the desktop

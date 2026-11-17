@@ -78,9 +78,10 @@ headers, so the pairing code is the credential: keep it private. See
   says where the version came from. If it says the recipe's default, the recipe could not find
   your Orca app or CLI. Set `SPRITES_ORCA_VERSION` to the version in Orca > About Orca.
 - **A workspace failed and the Sprite is still there.** The recipe destroys the Sprite when
-  `create` fails, but if you cancel a workspace while it is being created, Orca may stop the
-  recipe before that finishes. List leftovers with `sprite list --prefix orca-` and remove
-  one with `sprite destroy --force <name>`.
+  `create` fails, but if you cancel a workspace while it is being created, or Orca quits, Orca
+  may stop the recipe before that finishes. Orca then keeps the VM listed in its Cloud VM
+  settings; removing it there destroys the Sprite. To find leftovers yourself, use
+  `sprite list --prefix orca-`, and remove one with `sprite destroy --force <name>`.
 - **"the sprite CLI is not on PATH"** or **"node is not on PATH"**: Orca does not see your
   shell's `PATH`. Start Orca from a terminal.
 - **"no Sprites org"**: run `sprite login`, or set `SPRITES_ORG`.

@@ -4,16 +4,10 @@
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"  # inlined by scripts/build.mjs
 
-# Sprite names are at most 55 characters, and Orca's ORCA_VM_INSTANCE_ID is a UUID, so the
-# name carries a 12-character hash of the instance id rather than the id itself.
 create_started="$(date +%s)"
 ensure_org
 resolve_repo
-recipe_id="$(sanitize_name "${ORCA_RECIPE_ID:-sprites}")"
-instance_hash="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0, 12))' "${ORCA_VM_INSTANCE_ID:-$(date +%s)-$RANDOM}")"
-max=$((55 - ${#instance_hash} - 1))
-name="$(sanitize_name "$(printf '%s' "$name_prefix-$recipe_id" | cut -c1-"$max")-$instance_hash")"
-[ "${#name}" -le 55 ] || die "Sprite name too long: $name"
+name="$(sprite_name_for "${ORCA_VM_INSTANCE_ID:-$(date +%s)-$RANDOM}")"
 
 name_is_free "$name"
 # Armed before `sprite create`, which can fail after the Sprite exists. The name was free a
