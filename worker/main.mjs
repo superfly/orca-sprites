@@ -61,20 +61,28 @@ export function loginShell() {
  *  sprite CLI and node. Null when the shell does not answer within 5 s.
  *  - The shell runs in its own session (detached) with no stdin or stderr, so an interactive
  *    shell never takes over the terminal Orca was started from.
- *  - Interactive shells ignore SIGTERM and an rc file may wait for input, so a slow shell's
- *    whole process group gets SIGKILL. */
+ *  - Interactive shells ignore SIGTERM and an rc file may wait for input or start background
+ *    programs, so the shell's whole process group gets SIGKILL once PATH has arrived or 5 s pass. */
 export function loginShellPath(shell = loginShell()) {
   const mark = '__ORCA_SPRITES_PATH__'
+  const pattern = new RegExp(`${mark}(.*?)${mark}`, 's')
   return new Promise((resolve) => {
     let out = ''
     let done = false
+    let child
+    // Answer as soon as the PATH has arrived: a program the rc file started in the background
+    // may keep stdout open long after the shell exits. Then kill the whole process group, so no
+    // such program is left running, whether the shell answered or timed out.
     const finish = (value) => {
       if (done) return
       done = true
       clearTimeout(timer)
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {}
+      child?.stdout?.destroy()
       resolve(value)
     }
-    let child
     try {
       child = spawn(shell, ['-ilc', `printf '%s%s%s' ${mark} "$PATH" ${mark}`], {
         detached: true,
@@ -84,21 +92,14 @@ export function loginShellPath(shell = loginShell()) {
     } catch {
       return resolve(null)
     }
-    const timer = setTimeout(() => {
-      try {
-        process.kill(-child.pid, 'SIGKILL')
-      } catch {}
-      child.stdout?.destroy()
-      finish(null)
-    }, 5000)
+    const timer = setTimeout(() => finish(null), 5000)
     child.on('error', () => finish(null))
     child.stdout.on('data', (chunk) => {
       out += chunk
+      const match = out.match(pattern)
+      if (match) finish(absolutePath(match[1].trim()))
     })
-    child.on('close', () => {
-      const match = out.match(new RegExp(`${mark}(.*?)${mark}`, 's'))
-      finish(match ? absolutePath(match[1].trim()) : null)
-    })
+    child.on('close', () => finish(null))
   })
 }
 

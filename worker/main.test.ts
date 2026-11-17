@@ -58,3 +58,13 @@ test('a login shell that waits for input does not hang', async () => {
   assert.equal(await loginShellPath(shell), null)
   assert.ok(Date.now() - started < 8000)
 })
+
+test('a background program the rc file starts neither delays the answer nor stays running', async () => {
+  const { loginShellPath } = await import('./main.mjs')
+  const d = mkdtempSync(join(tmpdir(), 'orca-sprites-bg-'))
+  const shell = join(d, 'bg.sh')
+  writeFileSync(shell, `#!/bin/sh\nsleep 30 &\necho "$$" > ${d}/pid\nprintf '%s%s%s' __ORCA_SPRITES_PATH__ /usr/bin:/bin __ORCA_SPRITES_PATH__\n`, { mode: 0o755 })
+  const started = Date.now()
+  assert.equal(await loginShellPath(shell), '/usr/bin:/bin')
+  assert.ok(Date.now() - started < 3000)
+})
