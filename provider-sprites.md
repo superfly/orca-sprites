@@ -253,7 +253,7 @@ Pass the full `wss://` URL to `--pairing-address`. A host name alone gives
   trusted. When the Sprite image already makes bypass permissions the default and
   `~/.claude/settings.json` does not set `skipDangerousModePermissionPrompt`, the build step sets
   it, so the bypass warning does not stop a session Orca launches. With any other default it
-  leaves the setting alone, and the warning still appears once.
+  leaves the setting alone, and under Orca's default Yolo mode the warning still appears once.
 - `sprite exec` returns the remote exit code.
 - `sprite exec --env` takes `KEY=value,KEY2=value2`, so values must not contain commas. The
   scripts refuse such values.
