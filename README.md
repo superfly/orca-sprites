@@ -41,8 +41,8 @@ Sprite.
    `SPRITE_TOKEN`. You also need `node` and `git`.
 2. In Orca, open **Settings → Plugins → Add plugin → From a Git URL…**, enter
    `https://github.com/superfly/orca-sprites`, then **Continue** and **Install**. Orca asks
-   you to confirm that you trust the publisher. Then turn the plugin on, and approve its access:
-   it runs its own code on this computer (a small worker) and reads its own settings.
+   you to confirm that you trust the publisher. Then turn the plugin on, and approve its access.
+   Orca labels it **Full access**; [Why full access](#why-full-access) says what that means.
 3. Turn on **Settings → Experimental → Cloud VM**.
 4. Create a workspace and pick **Run on → Per-Workspace Environment → Sprites**.
 5. Sign Claude in on that workspace's Sprite, once per workspace:
@@ -63,6 +63,18 @@ have checked out here. It needs no git token, so private repositories and reposi
 remote work too. Uncommitted changes stay on this computer. Commits on the Sprite use your
 `user.name` and `user.email`. `origin` points at the same repository over HTTPS: to push from
 the Sprite, run `gh auth login` in a workspace terminal.
+
+### Why full access
+
+Orca shows **Full access** for any plugin that runs its own code, and this one does: a small
+worker that copies the plugin's Settings for the recipe. That code runs as you, with your files,
+network and `sprite` login. The recipe that creates Sprites already did that, in every version
+of this plugin: it runs shell commands as you to call the `sprite` CLI and send your repository.
+So the worker adds no new access to your computer.
+
+Inside Orca, the plugin asks only to read and change its own settings. It does not ask to type
+into terminals, start agents or change workspaces, and Orca checks those on every call. The code is in this
+repository: [`worker/`](worker) and [`src/sprites/`](src/sprites).
 
 ## Settings
 
