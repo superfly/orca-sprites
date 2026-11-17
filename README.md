@@ -41,12 +41,11 @@ Sprite.
    `SPRITE_TOKEN`. You also need `node` and `git`.
 2. In Orca, open **Settings → Plugins → Add plugin → From a Git URL…**, enter
    `https://github.com/superfly/orca-sprites`, then **Continue** and **Install**. Orca asks
-   you to confirm that you trust the publisher. Then turn the plugin on.
+   you to confirm that you trust the publisher. Then turn the plugin on, and approve its access:
+   it runs its own code on this computer (a small worker) and reads its own settings.
 3. Turn on **Settings → Experimental → Cloud VM**.
-4. Start Orca from a terminal if `sprite`, `node` and `git` are not in standard locations: an
-   Orca started from the Dock or a desktop launcher does not see your shell's `PATH`.
-5. Create a workspace and pick **Run on → Per-Workspace Environment → Sprites**.
-6. Sign Claude in on that workspace's Sprite, once per workspace:
+4. Create a workspace and pick **Run on → Per-Workspace Environment → Sprites**.
+5. Sign Claude in on that workspace's Sprite, once per workspace:
    1. Open **Settings** and, in the **Host** menu at the top, choose the workspace's VM (for
       example `my-repo VM e33a460e`).
    2. Under **Accounts → Claude**, click **Add Account**. Sign in in your browser, then paste
@@ -67,7 +66,16 @@ the Sprite, run `gh auth login` in a workspace terminal.
 
 ## Settings
 
-Everything has a default. To change one, set the variable in the environment Orca starts from.
+Everything has a default. To change one, open **Settings → Plugins → Fly.io Sprites**. A
+change applies to the next workspace you create, and keep-awake also to existing ones when
+they resume.
+
+The plugin's worker copies these settings to `~/.config/orca-sprites/settings.json`, which the
+recipe reads, with the `PATH` of your login shell. So an Orca started from the Dock or a desktop
+launcher still finds `sprite`, `node` and `git`.
+
+You can also set each one as an environment variable where Orca starts. A variable wins over
+the setting:
 
 | Variable | Default |
 |---|---|
@@ -93,8 +101,11 @@ headers, so the pairing code is the credential: keep it private. See
   settings. **Cleanup** on that row destroys the Sprite; **Remove from list** only removes the
   row and leaves the Sprite running. To find leftovers yourself, use
   `sprite list --prefix orca-`, and remove one with `sprite destroy --force <name>`.
-- **"the sprite CLI is not on PATH"** or **"node is not on PATH"**: Orca does not see your
-  shell's `PATH`. Start Orca from a terminal.
+- **"the sprite CLI is not on PATH"** or **"node is not on PATH"**: the recipe uses the `PATH`
+  of your login shell, which the plugin's worker reads when it starts, every 10 minutes and when
+  you change a setting. Check that the plugin is on and its access approved, and that `sprite`
+  and `node` are on `PATH` in a new terminal. After installing one, turn the plugin off and on
+  to pick it up at once. Or start Orca from a terminal.
 - **"no Sprites org"**: run `sprite login`, or set `SPRITES_ORG`.
 - **An account added in Orca does not seem to take effect.** Workspaces created with plugin
   version 0.1.5 or earlier still get the old `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`

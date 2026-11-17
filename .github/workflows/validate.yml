@@ -29,3 +29,6 @@ jobs:
 
       - name: Plugin manifest is valid
         run: orca-ide plugin validate .
+
+      - name: Worker tests pass
+        run: orca-ide plugin test .

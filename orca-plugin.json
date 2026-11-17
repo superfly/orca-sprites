@@ -4,7 +4,7 @@
   "id": "sprites",
   "name": "Fly.io Sprites",
   "version": "0.5.1",
-  "execution": "declarative",
+  "execution": "trusted-worker",
   "description": "Run each Orca workspace in its own Sprite, a persistent Linux VM from Fly.io. Adds Sprites under Run on > Per-Workspace Environment.",
   "icon": "images/icon.png",
   "author": {
@@ -15,16 +15,74 @@
   "license": "MIT",
   "homepage": "https://fly.io/sprites",
   "engines": {
-    "orca": ">=1.4.246"
+    "orca": ">=1.4.248"
   },
+  "pluginApi": 1,
+  "main": "worker/main.mjs",
   "contributes": {
     "vmRecipes": [
       {
         "path": "recipes/sprites.json"
       }
+    ],
+    "settings": [
+      {
+        "key": "org",
+        "title": "Sprites organization",
+        "description": "Organization to create Sprites in. Empty: the sprite CLI’s default organization.",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "key": "namePrefix",
+        "title": "Sprite name prefix",
+        "description": "Start of every Sprite name the plugin creates.",
+        "type": "string",
+        "default": "orca"
+      },
+      {
+        "key": "orcaVersion",
+        "title": "Orca version on the Sprite",
+        "description": "Empty: the version of your Orca app.",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "key": "projectRoot",
+        "title": "Checkout path on the Sprite",
+        "description": "Absolute path. Empty: /home/sprite/<repository name>.",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "key": "browser",
+        "title": "Per-workspace browser",
+        "description": "Install Orca’s whole desktop app on the Sprite, which the browser needs. Creates take about a minute longer.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "keepAwake",
+        "title": "Keep the Sprite awake while an agent works",
+        "description": "Off: the Sprite sleeps once no client is connected, which stops a working agent.",
+        "type": "boolean",
+        "default": true
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "sprites",
+        "text": "Sprites",
+        "icon": "cloud",
+        "tooltip": "Fly.io Sprites"
+      }
     ]
   },
-  "capabilities": [],
+  "capabilities": [
+    {
+      "kind": "settings:own"
+    }
+  ],
   "cover": {
     "path": "images/cover.jpg",
     "alt": "Sprites for Orca, with the Fly.io logo, beside an illustration of the Fly.io balloon in swim goggles swimming underwater with fish"

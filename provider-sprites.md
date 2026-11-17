@@ -73,7 +73,8 @@ inside `$(...)` is not used: bash 3.2 misparses an apostrophe in one.
 
 | Source | Does |
 |---|---|
-| `src/sprites/lib.sh` | Settings, the `sprite` wrappers and the remote fragments |
+| `src/sprites/lib.sh` | Settings (environment, then the worker's settings file), the `sprite` wrappers and the remote fragments |
+| `worker/main.mjs` | The plugin's worker: copies the plugin's Settings and your login shell's `PATH` to `~/.config/orca-sprites/settings.json` for the recipe |
 | `src/sprites/create.sh` | Builds a Sprite, starts the `orca` and `orca-awake` services, prints the recipe JSON. Destroys the Sprite if any step fails. |
 | `src/sprites/suspend.sh` | Stops the `orca` and `orca-awake` services and releases the keep-awake lease |
 | `src/sprites/resume.sh` | Starts the `orca` and `orca-awake` services, prints the saved recipe JSON |

@@ -29,6 +29,26 @@ step() { step_started="$(date +%s)"; log "[$1/5] $2"; }
 step_done() { log "      done ($(( $(date +%s) - step_started ))s)"; }
 die() { printf '[sprites] error: %s\n' "$*" >&2; exit 1; }
 
+# The plugin's worker writes the plugin's Settings, and your login shell's PATH, to this file:
+# one "KEY": "value" pair per line, all strings. A variable already set in the environment wins.
+# PATH from the file goes first, so a Dock-launched Orca finds the sprite CLI and node.
+load_settings_file() {
+  local f="${SPRITES_SETTINGS_FILE:-$HOME/.config/orca-sprites/settings.json}" line key value
+  [ -r "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *'"'*'": "'*) ;; *) continue ;; esac
+    key="${line#*\"}"; key="${key%%\"*}"
+    value="${line#*\": \"}"; value="${value%\"*}"
+    case "$value" in *\\*) log "skipping $key in $f: escaped characters are not supported"; continue ;; esac
+    case "$key" in
+      PATH) PATH="$value:$PATH" ;;
+      SPRITES_ORG|SPRITES_NAME_PREFIX|SPRITES_ORCA_VERSION|SPRITES_PROJECT_ROOT|SPRITES_BROWSER|SPRITES_KEEP_AWAKE)
+        if eval "[ -z \"\${$key+set}\" ]"; then export "$key=$value"; fi ;;
+    esac
+  done < "$f"
+}
+load_settings_file
+
 command -v sprite >/dev/null 2>&1 || die "the sprite CLI is not on PATH (install: curl -fsSL https://sprites.dev/install.sh | bash, then sprite login)"
 command -v node >/dev/null 2>&1 || die "node is not on PATH; the recipe uses it to read and write JSON"
 
@@ -476,10 +496,11 @@ sprite-env services create "$SERVICE" "${create_opts[@]}" >/dev/null
 '"$remote_wait_port"'
 wait_port
 # A Sprite stays awake for open connections and for its own exec sessions that print output.
-# It does not watch a service's output, and Orca's terminals are PTYs inside orca serve. So
-# when the desktop disconnects, the Sprite sleeps and an agent would stop mid-task. This second service asks
-# the Orca server every 15 s for agents it reports as working, and while there is one, keeps
-# a keep-awake lease at least 60 s ahead. It never shortens a longer lease set by hand. An agent counts only while its terminal is live and Orca has heard
+# It does not watch the output of a service, and Orca terminals are PTYs inside orca serve. So
+# when the desktop disconnects, the Sprite sleeps and an agent would stop mid-task. This second
+# service asks the Orca server every 15 s for agents it reports as working, and while there is
+# one, keeps a keep-awake lease at least 60 s ahead. It never shortens a longer lease set by
+# hand. An agent counts only while its terminal is live and Orca has heard
 # from it in the last 30 minutes, so a crashed agent cannot keep the Sprite awake for good.
 # Agents waiting for input or permission do not count.
 sprite-env services delete "$SERVICE-awake" >/dev/null 2>&1 || true
