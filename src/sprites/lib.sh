@@ -388,7 +388,20 @@ if [ -n "${GIT_USER_EMAIL:-}" ]; then git config --global user.email "$GIT_USER_
 node -e "
   const fs = require(\"node:fs\"), p = process.env.HOME + \"/.claude.json\";
   let c = {}; try { c = JSON.parse(fs.readFileSync(p, \"utf8\")); } catch {}
-  c.hasCompletedOnboarding = true; fs.writeFileSync(p, JSON.stringify(c, null, 2));
+  c.hasCompletedOnboarding = true;
+  // Newer Claude Code offers to switch the default permission mode to auto, which stops a new
+  // session (even one Orca launches with a prompt) until someone answers. Keep the default.
+  c.hasSeenAutoDefaultNudge = true;
+  fs.writeFileSync(p, JSON.stringify(c, null, 2));
+"
+# The Sprite image starts Claude Code in bypass-permissions mode, so every new session first
+# stops on a warning that needs a keypress, even one Orca launches with a prompt. A Sprite is
+# the disposable VM that warning asks for, so skip it, but only when bypass mode is the default.
+node -e "
+  const fs = require(\"node:fs\"), p = process.env.HOME + \"/.claude/settings.json\";
+  let s; try { s = JSON.parse(fs.readFileSync(p, \"utf8\")); } catch { process.exit(0); }
+  if (s?.permissions?.defaultMode !== \"bypassPermissions\" || s.skipDangerousModePermissionPrompt !== undefined) process.exit(0);
+  s.skipDangerousModePermissionPrompt = true; fs.writeFileSync(p, JSON.stringify(s, null, 2));
 "
 echo "[sprites]       done (${SECONDS}s, $(git rev-parse --short HEAD))" >&2'
 
