@@ -462,8 +462,9 @@ case "$services_help" in *--no-stream*) create_opts+=(--no-stream) ;; esac
 sprite-env services create "$SERVICE" "${create_opts[@]}" >/dev/null
 '"$remote_wait_port"'
 wait_port
-# A Sprite sleeps soon after its last connection closes, and sleeping ends every process on
-# it. So when the desktop disconnects, an agent would stop mid-task. This second service asks
+# A Sprite stays awake for open connections and for its own exec sessions that print output.
+# It does not watch a service's output, and Orca's terminals are PTYs inside orca serve. So
+# when the desktop disconnects, the Sprite sleeps and an agent would stop mid-task. This second service asks
 # the Orca server every 15 s for agents it reports as working, and while there is one, keeps
 # a keep-awake lease at least 60 s ahead. It never shortens a longer lease set by hand. An agent counts only while its terminal is live and Orca has heard
 # from it in the last 30 minutes, so a crashed agent cannot keep the Sprite awake for good.

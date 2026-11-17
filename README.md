@@ -23,9 +23,11 @@ When you create a workspace on Sprites, the recipe:
 3. starts `orca serve` as a Sprite service, so it comes back after the Sprite sleeps,
 4. returns the pairing code, and Orca connects over the Sprite's URL.
 
-A Sprite sleeps soon after the last connection to it closes, and sleeping stops everything
-running on it. So while Orca reports an agent on the Sprite as working, a small service on
-the Sprite keeps it awake, even after you close Orca or your laptop. The Sprite can sleep
+A Sprite stays awake while a connection is open or one of its own terminal sessions prints
+output. Orca's terminals run inside Orca's server, a Sprite service the Sprite does not watch
+for output, so once Orca disconnects the Sprite would sleep and stop the agent. So while Orca
+reports an agent on the Sprite as working, a small service on the Sprite keeps it awake, even
+after you close Orca or your laptop. The Sprite can sleep
 again once the agent finishes or stops to wait for you. You pay for the Sprite while it is
 awake. An agent that reports nothing to Orca for 30 minutes, such as one running a single
 very long command, stops counting, so the Sprite can sleep under it.
