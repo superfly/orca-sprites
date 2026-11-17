@@ -142,10 +142,13 @@ export function commonPrefix(names) {
 const asleep = (status) => status === 'warm' || status === 'cold' || status === 'suspended'
 export const describe = (status) => (status === 'running' ? 'awake' : asleep(status) ? 'asleep' : status)
 
-/** The ids of every workspace Orca lists, which are never on a recipe VM. */
+/** The ids of the local and SSH workspaces Orca lists, which are never on a recipe VM. Rows on
+ *  a runtime host (runtime:...) are left out, in case a later Orca lists Sprite workspaces. */
 async function localIds(orca) {
   const { workspaces } = await orca.host.call('workspace.list', {})
-  return workspaces.map((row) => row.id)
+  return workspaces
+    .filter((row) => row.hostId == null || row.hostId === 'local' || String(row.hostId).startsWith('ssh:'))
+    .map((row) => row.id)
 }
 
 /** Every Sprite this computer created, with its state and the workspace it was made for. */

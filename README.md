@@ -37,6 +37,8 @@ Sprite.
 
 ## Install
 
+You need Orca 1.4.259 or later.
+
 1. Install the [`sprite` CLI](https://docs.fly.io/sprites) and run `sprite login`, or export
    `SPRITE_TOKEN`. You also need `node` and `git`. The plugin's panel and status bar need the
    saved login from `sprite login`.
@@ -103,9 +105,8 @@ on a Sprite, suspend and resume the workspace, then open it again.
 
 Everything has a default. To change one, open **Settings → Plugins → Fly.io Sprites**. A
 change applies to the next workspace you create, and keep-awake also to existing ones when
-they resume. Change the organization or name prefix only when no workspace is being created: a
-create that fails after that cannot be cleaned up from Orca, because Cleanup looks for the Sprite
-under the new settings. Remove it with `sprite -o <org> destroy --force <name>`.
+they resume. A Sprite from a create that failed before you changed the organization or prefix is
+still found by Cleanup: `create` records each Sprite as soon as it exists.
 
 The plugin's worker copies these settings to `~/.config/orca-sprites/settings.json`, which the
 recipe reads, with the `PATH` of your login shell. So an Orca started from the Dock or a desktop

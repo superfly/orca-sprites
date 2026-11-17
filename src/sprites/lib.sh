@@ -290,11 +290,31 @@ record_sprite() {
       repoPath: e.ORCA_REPO_PATH || null, projectFolder: e.SPRITES_PROJECT_FOLDER || null,
       createdAt: created ? now : null };
     entry.workspaceName = entry.workspaceName || e.ORCA_WORKSPACE_NAME || null;
+    entry.url = entry.url || url || null;
+    entry.projectFolder = entry.projectFolder || e.SPRITES_PROJECT_FOLDER || null;
     entry.recordedAt = now;
     const tmp = `${file}.${process.pid}`;
     fs.writeFileSync(tmp, JSON.stringify(entry, null, 2) + "\n", { mode: 0o600 });
     fs.renameSync(tmp, file);
   ' "$registry_dir" "$1" "$org" "$2" "${3:-}" 2>/dev/null || log "could not record $1 in $registry_dir"
+}
+
+# registry_instance <instance id>: "<name> <org>" of the Sprite create recorded for this Orca
+# instance, or nothing. destroy uses it when create never returned, so a change of org or name
+# prefix in Settings since then cannot hide the Sprite.
+registry_instance() {
+  node -e '
+    const fs = require("node:fs"), [dir, id] = process.argv.slice(1);
+    let files = []; try { files = fs.readdirSync(dir).filter((f) => f.endsWith(".json")); } catch {}
+    for (const f of files) {
+      try {
+        const e = JSON.parse(fs.readFileSync(`${dir}/${f}`, "utf8"));
+        if (e.instanceId === id && /^[a-z0-9][a-z0-9-]{0,62}$/.test(e.name) && /^[A-Za-z0-9._-]+$/.test(e.org || "")) {
+          process.stdout.write(`${e.name} ${e.org}`); break;
+        }
+      } catch {}
+    }
+  ' "$registry_dir" "$1" 2>/dev/null || true
 }
 
 # forget_sprite <name>: drop a destroyed Sprite from the registry. Never fails the caller.

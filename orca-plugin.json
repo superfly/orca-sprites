@@ -15,7 +15,7 @@
   "license": "MIT",
   "homepage": "https://fly.io/sprites",
   "engines": {
-    "orca": ">=1.4.248"
+    "orca": ">=1.4.259"
   },
   "pluginApi": 1,
   "main": "worker/main.mjs",

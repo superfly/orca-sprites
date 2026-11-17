@@ -60,8 +60,9 @@ test('links the focused workspace by its path on the Sprite, only when unambiguo
   assert.equal(spriteFor(ctx(vmId('修正')), [{ ...a, workspaceName: 'ログイン' }]), null)
   // Two Sprites made for workspaces of the same name: refuse to guess.
   assert.equal(spriteFor(ctx(vmId('feature-a')), [a, { ...b, workspaceName: 'feature-a' }]), null)
-  // A workspace Orca lists is local or SSH, never a recipe VM.
+  // A workspace Orca lists as local or SSH is never a recipe VM; a linked entry still wins.
   assert.equal(spriteFor(ctx(vmId('feature-a')), [a], [vmId('feature-a')]), null)
+  assert.equal(spriteFor(ctx(vmId('feature-a')), [{ ...a, workspaceId: vmId('feature-a') }], [vmId('feature-a')])?.link, false)
   // Too old to link; a resume (recordedAt) reopens the window.
   const old = { ...a, createdAt: now - 3 * 60 * 60 * 1000 }
   assert.equal(spriteFor(ctx(vmId('feature-a')), [old]), null)
@@ -79,6 +80,14 @@ test('resolveSprite saves the link', async () => {
   assert.equal((await resolveSprite(ctx(vmId('feature-c'), 'feature-c'), []))?.name, 'orca-sprites-ccc')
   assert.equal(read('orca-sprites-ccc').workspaceId, vmId('feature-c'))
   assert.equal(read('orca-sprites-ccc').workspaceLabel, 'feature-c')
+})
+
+test('the first link never brings back an entry destroy removed', async () => {
+  const { resolveSprite, saveEntry } = await import('./sprites.mjs')
+  const gone = { name: 'orca-sprites-zzz', org: 'acme', workspaceName: 'zz', createdAt: now }
+  await saveEntry(gone, registry, { onlyIfPresent: true })
+  assert.ok(!existsSync(join(registry, 'orca-sprites-zzz.json')))
+  assert.equal(await resolveSprite(ctx(vmId('zz')), []), null)
 })
 
 test('readRegistry ignores files whose name is not a Sprite name', async () => {

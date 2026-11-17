@@ -12,7 +12,7 @@
 
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -47,8 +47,9 @@ export async function readRegistry(dir = registryDir()) {
   return entries.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
 }
 
-export async function saveEntry(entry, dir = registryDir()) {
+export async function saveEntry(entry, dir = registryDir(), { onlyIfPresent = false } = {}) {
   const file = join(dir, `${entry.name}.json`)
+  if (onlyIfPresent && !(await stat(file).catch(() => null))) return
   const tmp = `${file}.${randomUUID()}.tmp`
   await writeFile(tmp, `${JSON.stringify(entry, null, 2)}\n`, { mode: 0o600 })
   await rename(tmp, file)
@@ -71,9 +72,10 @@ export async function forgetEntry(name, dir = registryDir()) {
  */
 export function spriteFor(context, entries, localIds = [], now = Date.now()) {
   const id = context?.workspaceId
-  if (!id || localIds.includes(id)) return null
+  if (!id) return null
   const linked = entries.find((entry) => entry.workspaceId === id)
   if (linked) return { entry: linked, link: false }
+  if (localIds.includes(id)) return null
   const name = spriteWorkspaceName(id)
   if (!name) return null
   const parent = spriteWorkspaceParent(id)
@@ -127,7 +129,8 @@ export async function resolveSprite(context, localIds, dir = registryDir()) {
   if (found.link) {
     found.entry.workspaceId = context.workspaceId
     found.entry.workspaceLabel = context.displayName
-    await saveEntry(found.entry, dir).catch(() => {})
+    // Only while the entry still exists: destroy may have removed it since it was read.
+    await saveEntry(found.entry, dir, { onlyIfPresent: true }).catch(() => {})
   }
   return found.entry
 }
@@ -151,7 +154,10 @@ export function sprite(args, env, timeoutMs = 20000) {
       (error, stdout, stderr) => {
         if (!error) return resolve(String(stdout))
         if (error.code === 'ENOENT') return reject(new Error('the sprite CLI is not on PATH'))
-        if (error.killed) return reject(new Error(`sprite ${args.slice(2, 4).join(' ')} timed out`))
+        if (error.killed) {
+          const words = args.filter((arg, i) => !arg.startsWith('-') && !(i > 0 && /^-(o|s)$/.test(args[i - 1])))
+          return reject(new Error(`sprite ${words.slice(0, 2).join(' ')} timed out`))
+        }
         const text = String(stderr || stdout || error.message)
         const message = /no token found|not logged in|run 'sprite login'|not found in config|organization .* not found/i.test(text)
           ? 'the sprite CLI has no saved login: run sprite login (the plugin does not see SPRITE_TOKEN)'

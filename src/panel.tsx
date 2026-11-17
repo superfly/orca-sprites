@@ -30,8 +30,11 @@ const sprites = atom<SpriteRow[] | null>(null)
 const error = atom<string | null>(null)
 const loading = atom(false)
 const busy = atom<Record<string, string>>({})
-/** The checkpoint run each Sprite's spinner waits for, so another run's result never clears it. */
+/** The checkpoint run each Sprite's spinner waits for, so another run's result never clears it,
+ *  and when it started, so a list answered before it began cannot clear it either. */
 const waiting: Record<string, number> = {}
+const startedAt: Record<string, number> = {}
+let clock = 0
 const notice = atom<{ tone: 'success' | 'danger' | 'neutral'; title: string; text: string } | null>(null)
 
 // Only the newest refresh may update the list, so a slow one can never bring back a row that a
@@ -39,16 +42,19 @@ const notice = atom<{ tone: 'success' | 'danger' | 'neutral'; title: string; tex
 let latest = 0
 export async function refresh(): Promise<void> {
   const mine = ++latest
+  const sentAt = ++clock
   set(loading, true)
   try {
     const result = await plugin.request('sprites.list', {}, { timeoutMs: 60000 })
     if (mine !== latest) return
     set(sprites, result.sprites)
     set(error, result.error)
+    // Clear only spinners started before this list was asked for: a later one is still live.
     const running = new Set(result.checkpointing ?? [])
-    for (const name of Object.keys(waiting)) if (!running.has(name)) delete waiting[name]
+    const stale = (name: string) => !running.has(name) && (startedAt[name] ?? 0) < sentAt
+    for (const name of Object.keys(waiting)) if (stale(name)) delete waiting[name]
     update(busy, (b) =>
-      Object.fromEntries(Object.entries(b).filter(([name, what]) => what !== 'Checkpointing' || running.has(name)))
+      Object.fromEntries(Object.entries(b).filter(([name, what]) => what !== 'Checkpointing' || !stale(name)))
     )
   } catch (e) {
     if (mine === latest) set(error, (e as Error).message)
@@ -61,6 +67,7 @@ const setBusy = (name: string, what: string | null) =>
   update(busy, ({ [name]: _, ...rest }) => (what ? { ...rest, [name]: what } : rest))
 
 async function checkpoint(name: string): Promise<void> {
+  startedAt[name] = ++clock
   setBusy(name, 'Checkpointing')
   set(notice, null)
   try {
