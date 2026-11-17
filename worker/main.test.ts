@@ -63,8 +63,19 @@ test('a background program the rc file starts neither delays the answer nor stay
   const { loginShellPath } = await import('./main.mjs')
   const d = mkdtempSync(join(tmpdir(), 'orca-sprites-bg-'))
   const shell = join(d, 'bg.sh')
-  writeFileSync(shell, `#!/bin/sh\nsleep 30 &\necho "$$" > ${d}/pid\nprintf '%s%s%s' __ORCA_SPRITES_PATH__ /usr/bin:/bin __ORCA_SPRITES_PATH__\n`, { mode: 0o755 })
+  writeFileSync(shell, `#!/bin/sh\nsleep 30 &\necho "$!" > ${d}/pid\nprintf '%s%s%s' __ORCA_SPRITES_PATH__ /usr/bin:/bin __ORCA_SPRITES_PATH__\n`, { mode: 0o755 })
   const started = Date.now()
   assert.equal(await loginShellPath(shell), '/usr/bin:/bin')
   assert.ok(Date.now() - started < 3000)
+  const helper = Number(readFileSync(join(d, 'pid'), 'utf8'))
+  const alive = () => {
+    try {
+      process.kill(helper, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 20))
+  assert.equal(alive(), false)
 })
