@@ -5,6 +5,7 @@ set -euo pipefail
 . "$(dirname "$0")/lib.sh"  # inlined by scripts/build.mjs
 
 create_started="$(date +%s)"
+check_create_settings
 ensure_org
 resolve_repo
 name="$(sprite_name_for "${ORCA_VM_INSTANCE_ID:-$(date +%s)-$RANDOM}")"

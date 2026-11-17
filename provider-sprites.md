@@ -19,7 +19,8 @@ mode does not apply.
 | Agent-auth snapshot | Not needed, and the recipe sends no agent credential. People sign in per workspace with Orca's own accounts: Settings → Host (the workspace's VM) → Accounts → Add Account, which runs the agent's login on the Sprite and finishes in the desktop browser. A desktop login is never copied: Claude's refresh token rotates, so two copies sign each other out (tested). The recipe sends no secrets at all: the repository arrives as a git bundle from the desktop, so no git token is needed. |
 | Published port | Each Sprite has one URL, `https://<name>-<slug>.sprites.app` (the slug is fixed per org; read the URL from `sprite --json list`), that routes to port 8080. Set its auth to `public`, and the pairing code is the credential. See "Why the URL is public". |
 | Keep `orca serve` running | A Sprite service running `orca serve --supervise`, with `--restart always` and `--http-port 8080`. The Sprite sleeps when idle and starts services again on the next request. Because the port is declared, the request that wakes the Sprite waits until the server listens instead of failing with 502. |
-| `suspend` / `resume` | `suspend` stops the service, so no connection keeps the Sprite awake and it sleeps. `resume` starts the service and prints the saved recipe JSON. The URL and pairing identity do not change. |
+| Keep the Sprite awake while an agent works | A second service, `orca-awake`, runs `~/.orca-keep-awake.sh`. Every 15 s it reads `orca-ide worktree ps --json` from the local server and, while any agent is `working`, keeps a `sprite-env keep-awake` lease at least 60 s ahead (it renews for 90 s, and never shortens a longer lease). An agent counts only while its terminal is live and its last hook event is under 30 minutes old, so a crashed agent cannot hold the Sprite awake. `blocked`, `waiting` and `done` agents do not count. Orca's agent hooks report to the server on the Sprite, so this works with no desktop connected. `SPRITES_KEEP_AWAKE=0` skips the service. |
+| `suspend` / `resume` | `suspend` stops both services and releases any keep-awake lease, so no connection keeps the Sprite awake and it sleeps. `resume` starts both services and prints the saved recipe JSON. The URL and pairing identity do not change. |
 | `destroy` | `sprite destroy --force` |
 
 ## Why `create` runs `orca serve` twice
@@ -73,9 +74,9 @@ inside `$(...)` is not used: bash 3.2 misparses an apostrophe in one.
 | Source | Does |
 |---|---|
 | `src/sprites/lib.sh` | Settings, the `sprite` wrappers and the remote fragments |
-| `src/sprites/create.sh` | Builds a Sprite, starts the `orca` service, prints the recipe JSON. Destroys the Sprite if any step fails. |
-| `src/sprites/suspend.sh` | Stops the `orca` service |
-| `src/sprites/resume.sh` | Starts the `orca` service, prints the saved recipe JSON |
+| `src/sprites/create.sh` | Builds a Sprite, starts the `orca` and `orca-awake` services, prints the recipe JSON. Destroys the Sprite if any step fails. |
+| `src/sprites/suspend.sh` | Stops the `orca` and `orca-awake` services and releases the keep-awake lease |
+| `src/sprites/resume.sh` | Starts the `orca` and `orca-awake` services, prints the saved recipe JSON |
 | `src/sprites/destroy.sh` | Destroys the Sprite. It succeeds if the Sprite is already gone. When `create` never returned a result, it names the Sprite from the instance id, as `create` did. |
 
 There is no state file. `create` takes its settings from what the desktop already knows: the

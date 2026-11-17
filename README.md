@@ -23,6 +23,15 @@ When you create a workspace on Sprites, the recipe:
 3. starts `orca serve` as a Sprite service, so it comes back after the Sprite sleeps,
 4. returns the pairing code, and Orca connects over the Sprite's URL.
 
+A Sprite stays awake while a connection is open or one of its own terminal sessions prints
+output. Orca's terminals run inside Orca's server, a Sprite service the Sprite does not watch
+for output, so once Orca disconnects the Sprite would sleep and stop the agent. So while Orca
+reports an agent on the Sprite as working, a small service on the Sprite keeps it awake, even
+after you close Orca or your laptop. The Sprite can sleep
+again once the agent finishes or stops to wait for you. You pay for the Sprite while it is
+awake. An agent that reports nothing to Orca for 30 minutes, such as one running a single
+very long command, stops counting, so the Sprite can sleep under it.
+
 Suspending the workspace stops `orca serve` so the Sprite sleeps. Deleting it destroys the
 Sprite.
 
@@ -67,6 +76,7 @@ Everything has a default. To change one, set the variable in the environment Orc
 | `SPRITES_ORCA_VERSION` | The version of your Orca app: `Orca.app` on macOS, the `orca-ide` package on Linux, else the Orca CLI. Else 1.4.256. Step 2 of the provisioning log says where the version came from. |
 | `SPRITES_NAME_PREFIX` | `orca` |
 | `SPRITES_BROWSER` | Off: the Sprite gets only Orca's server, from Orca's server-only build when the release has one. Set to `1` for Orca's per-workspace browser: the Sprite then installs Orca's whole desktop app, which takes about a minute longer. |
+| `SPRITES_KEEP_AWAKE` | On: the Sprite stays awake while an agent works. Set to `0` to let it sleep once no client is connected, which stops the agent. A change applies to new workspaces, and to existing ones when they resume. |
 
 Each workspace's Sprite has a **public** URL. The Orca client cannot send Sprites auth
 headers, so the pairing code is the credential: keep it private. See
