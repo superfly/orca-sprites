@@ -3,7 +3,7 @@
   "manifestVersion": 2,
   "id": "sprites",
   "name": "Fly.io Sprites",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "execution": "trusted-worker",
   "description": "Run each Orca workspace in its own Sprite, a persistent Linux VM from Fly.io. Adds Sprites under Run on > Per-Workspace Environment.",
   "icon": "images/icon.png",
@@ -135,9 +135,9 @@
       "caption": "Run on → Sprites"
     },
     {
-      "path": "images/screenshot-4-provisioning.jpg",
-      "alt": "Provisioning steps for a Sprites workspace: create Sprite, install Orca, clone repo, start Orca, then ready in under two minutes",
-      "caption": "Provisioning, step by step"
+      "path": "images/screenshot-4-panel.jpg",
+      "alt": "Sprites panel with one Sprite awake and one asleep, each with Open URL and Checkpoint, and a Sprite awake item in the status bar",
+      "caption": "See which Sprites are awake"
     },
     {
       "path": "images/screenshot-5-sign-in.jpg",
@@ -145,9 +145,9 @@
       "caption": "Sign Claude in on the Sprite"
     },
     {
-      "path": "images/screenshot-6-agent.jpg",
-      "alt": "Claude Code session in a workspace tagged with its Sprite VM, finishing with 87 tests passed",
-      "caption": "Your agent, on its own VM"
+      "path": "images/screenshot-6-keep-awake.jpg",
+      "alt": "Timeline after Orca is closed: the agent keeps working while the Sprite stays awake, then the Sprite sleeps once the agent is done",
+      "caption": "Keeps working when you close Orca"
     }
   ]
 }
