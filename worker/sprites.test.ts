@@ -37,8 +37,10 @@ const ctx = (workspaceId: string, displayName = 'feature-a') => ({ workspaceId, 
 
 test('links the focused workspace by its path on the Sprite, only when unambiguous, then by its id', async () => {
   const { spriteFor, spriteWorkspaceName } = await import('./sprites.mjs')
-  const a = { name: 'orca-sprites-aaa', workspaceName: 'feature-a', createdAt: now }
-  const b = { name: 'orca-sprites-bbb', workspaceName: 'feature-b', createdAt: now }
+  const a = { name: 'orca-sprites-aaa', url: 'https://aaa', workspaceName: 'feature-a', createdAt: now }
+  const b = { name: 'orca-sprites-bbb', url: 'https://bbb', workspaceName: 'feature-b', createdAt: now }
+  // Still being built (no URL yet): never linked.
+  assert.equal(spriteFor(ctx(vmId('feature-a')), [{ ...a, url: null }]), null)
   assert.equal(spriteWorkspaceName(vmId('feature-a')), 'feature-a')
   assert.equal(spriteWorkspaceName('x::/Users/me/repo'), null)
   assert.equal(spriteFor(ctx(vmId('feature-a')), [a, b])?.entry.name, 'orca-sprites-aaa')
@@ -84,7 +86,7 @@ test('resolveSprite saves the link', async () => {
 
 test('the first link never brings back an entry destroy removed', async () => {
   const { resolveSprite, saveEntry } = await import('./sprites.mjs')
-  const gone = { name: 'orca-sprites-zzz', org: 'acme', workspaceName: 'zz', createdAt: now }
+  const gone = { name: 'orca-sprites-zzz', org: 'acme', url: 'https://zzz', workspaceName: 'zz', createdAt: now }
   await saveEntry(gone, registry, { onlyIfPresent: true })
   assert.ok(!existsSync(join(registry, 'orca-sprites-zzz.json')))
   assert.equal(await resolveSprite(ctx(vmId('zz')), []), null)

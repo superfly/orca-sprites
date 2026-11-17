@@ -82,6 +82,9 @@ export function spriteFor(context, entries, localIds = [], now = Date.now()) {
   const candidates = entries.filter(
     (entry) =>
       !entry.workspaceId &&
+      // A Sprite still being built has no URL yet: never link it, since its workspace cannot
+      // exist yet. serve (create) and resume set the URL.
+      Boolean(entry.url) &&
       sameFolder(entry.workspaceName, name) &&
       // Orca keeps workspaces in <workspaces folder>/<project>/<name>, the project named after the
       // checkout folder on the Sprite, so a same-named workspace of another project never matches.
