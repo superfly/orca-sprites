@@ -90,7 +90,8 @@ exceeds its durable capacity"). So the build keeps the phases small:
 - Each phase is gzipped and base64-encoded. The command unpacks it with
   `base64 --decode | gunzip -c`, which macOS and Linux both have, and runs it as
   `bash -c "$s" sprites-<phase>`. The script travels as one argument, so stdin stays free for
-  the lifecycle payload. `--check` compares the unpacked scripts, so another zlib that
+  the lifecycle payload. The command itself starts with `bash -c '...'`, because Orca labels a
+  recipe with the first word of its create command ("bash · destroy configured"). `--check` compares the unpacked scripts, so another zlib that
   compresses differently does not make the recipe look stale.
 
 That is about 27 KB per VM, room for about 37 VMs. `node scripts/build.mjs --print <phase>`
