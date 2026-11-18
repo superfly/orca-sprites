@@ -74,11 +74,27 @@ What Orca 1.4.261 gives the worker, found on a real desktop:
 - Orca does not show what a command returns, so commands answer with a notification.
 
 A plugin recipe must be self-contained (each command is a string of at most 32 KiB), so
-`scripts/build.mjs` inlines `src/sprites/lib.sh` into each phase and wraps it as
-`bash -c '<script>' sprites-<phase>`, with each `'` written as `'\''`. Orca runs every phase
-with `sh -c` in the repository's root: dash on Debian and Ubuntu, bash 3.2 on macOS. The
-script travels as one argument, so stdin stays free for the lifecycle payload. A heredoc
-inside `$(...)` is not used: bash 3.2 misparses an apostrophe in one.
+`scripts/build.mjs` inlines `src/sprites/lib.sh` into each phase. Orca runs every phase with
+`sh -c` in the repository's root: dash on Debian and Ubuntu, bash 3.2 on macOS.
+
+Orca also copies all four commands into the record of each VM it creates, so that a plugin
+update cannot change how an existing VM is cleaned up. All records share one store file with a
+1 MB cap, and at about 117 KB per VM, provisioning failed after about eight VMs ("the store
+exceeds its durable capacity"). So the build keeps the phases small:
+
+- Code in `lib.sh` between `#@create-only` and `#@end` goes into create only. Those regions may
+  hold only function definitions (`name() {`) and `remote_*='...'` fragments: the build matches
+  each region against those two shapes, in order, and fails on anything else. `bash -n`, which
+  parses without running anything, checks that each function ends where the build thinks it
+  does. The build also fails if suspend, resume or destroy names anything defined there.
+- Each phase is gzipped and base64-encoded. The command unpacks it with
+  `base64 --decode | gunzip -c`, which macOS and Linux both have, and runs it as
+  `bash -c "$s" sprites-<phase>`. The script travels as one argument, so stdin stays free for
+  the lifecycle payload. `--check` compares the unpacked scripts, so another zlib that
+  compresses differently does not make the recipe look stale.
+
+That is about 27 KB per VM, room for about 37 VMs. `node scripts/build.mjs --print <phase>`
+shows a phase's script.
 
 | Source | Does |
 |---|---|

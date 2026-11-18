@@ -156,11 +156,17 @@ The recipe's scripts are in `src/sprites/`. Orca reads `recipes/sprites.json`, w
 `scripts/build.mjs` builds from them, because a plugin recipe must be self-contained:
 
 ```bash
-node scripts/build.mjs            # rebuild recipes/sprites.json
-node scripts/build.mjs --check    # fail if it is stale
+node scripts/build.mjs                  # rebuild recipes/sprites.json
+node scripts/build.mjs --check          # fail if it is stale
+node scripts/build.mjs --print destroy  # show one phase's script, unpacked
 orca plugin validate . --json
 orca plugin dev load .            # load this folder into Orca
 ```
+
+Orca keeps a copy of all four phases with every VM it creates, in a store file with a 1 MB cap,
+so the build keeps them small: code in `lib.sh` between `#@create-only` and `#@end` goes only
+into create, and each phase is gzipped. The build fails if a phase uses a function that only
+create has.
 
 `dev/run-phase.sh <phase> <repo>` runs one phase of the built recipe the way Orca does, and
 `dev/lifecycle-test.sh <repo>` runs create, idle wake, suspend, resume and destroy against a
