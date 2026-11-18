@@ -1,6 +1,9 @@
 # shellcheck shell=bash
 # Shared helpers for the Sprites recipe. scripts/build.mjs inlines this file into every
 # phase of recipes/sprites.json, because a plugin recipe must be self-contained.
+# Code between `#@create-only` and `#@end` lines goes into create only, to keep the other
+# phases small. Put only functions and remote_* fragments there: the build fails on anything
+# else, and if suspend, resume or destroy names something defined there.
 #
 # Every phase keeps stdout for its one JSON result. Everything else goes to stderr.
 #
@@ -25,9 +28,11 @@
 #                          orca-server-sha256sums.txt from, instead of the Orca release
 
 log() { printf '[sprites] %s\n' "$*" >&2; }
-# step <n> <text>: start step n of create's 5 and log it; step_done logs how long it took.
-step() { step_started="$(date +%s)"; log "[$1/5] $2"; }
+#@create-only
+# step_start <n> <text>: start step n of create's 5 and log it; step_done logs how long it took.
+step_start() { step_started="$(date +%s)"; log "[$1/5] $2"; }
 step_done() { log "      done ($(( $(date +%s) - step_started ))s)"; }
+#@end
 die() { printf '[sprites] error: %s\n' "$*" >&2; exit 1; }
 
 # The plugin's worker writes the plugin's Settings, and your login shell's PATH, to this file:
@@ -59,6 +64,7 @@ org="${SPRITES_ORG:-}"
 repo_dir="" repo_url="" repo_ref="" origin_head="" project_root=""
 name_prefix="${SPRITES_NAME_PREFIX:-orca}"
 server_base="${SPRITES_SERVER_BASE:-}"
+#@create-only
 # resolve_orca_version (create only): sets orca_version, the Orca release to install, and
 # orca_version_from, where it came from, for the log. Orca 1.4.256 passes ORCA_VERSION empty, so
 # read the desktop Orca's version: on macOS from the Orca.app running this recipe, else an
@@ -98,6 +104,7 @@ resolve_orca_version() {
   orca_version="${v:-1.4.256}"; orca_version="${orca_version#v}"
   [ -n "$v" ] || orca_version_from="the recipe default: no Orca app or CLI found"
 }
+#@end
 orca_version="" orca_version_from=""
 # Only create rejects a bad value, so a typo never stops suspend or destroy from working.
 case "${SPRITES_BROWSER:-0}" in
@@ -157,6 +164,7 @@ use_payload_org() {
   ensure_org
 }
 
+#@create-only
 # `sprite exec --env` splits on commas, so a value with a comma would be misparsed.
 check_env_value() {
   case "$2" in *,*) die "$1 must not contain a comma (sprite exec --env splits on commas): $2" ;; esac
@@ -226,6 +234,7 @@ git_identity_file() {
 # human_size <bytes>
 human_size() { awk -v b="$1" 'BEGIN { split("B KB MB GB", u); i = 1; while (b >= 1024 && i < 4) { b /= 1024; i++ } printf (i == 1 ? "%d %s" : "%.1f %s"), b, u[i] }'; }
 
+#@end
 # Sprite names: lowercase letters, digits and hyphens.
 sanitize_name() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed -E 's/-+/-/g; s/^-//; s/-$//'
@@ -320,6 +329,7 @@ registry_instance() {
 # forget_sprite <name>: drop a destroyed Sprite from the registry. Never fails the caller.
 forget_sprite() { rm -f "$registry_dir/$1.json" 2>/dev/null || true; }
 
+#@create-only
 # with_checkout <sprite> <env K=V,...> <cmd...>: run a command with the repository bundle on
 # its stdin and the git identity uploaded at $IDENTITY_FILE. The bundle goes over stdin
 # because `sprite exec --file` rejects uploads of 32 MB and more (HTTP 413). No git token is
@@ -479,6 +489,7 @@ node -e "
 "
 echo "[sprites]       done (${SECONDS}s, $(git rev-parse --short HEAD))" >&2'
 
+#@end
 # Waits until something answers on the serve port.
 remote_wait_port='wait_port() {
   for _ in $(seq 1 240); do
@@ -490,6 +501,7 @@ remote_wait_port='wait_port() {
   return 1
 }'
 
+#@create-only
 # Mints the pairing code, then hands the server to a Sprite service.
 #
 # `orca serve --recipe-json` starts a detached server, prints the recipe JSON and returns.
@@ -584,6 +596,7 @@ AWAKE
 fi
 cat "$RECIPE_FILE"'
 
+#@end
 # Starts the stopped service again and prints the saved recipe JSON.
 remote_resume='set -euo pipefail
 [ -f "$RECIPE_FILE" ] || { echo "no $RECIPE_FILE on this Sprite" >&2; false; }
@@ -597,6 +610,7 @@ else
 fi
 cat "$RECIPE_FILE"'
 
+#@create-only
 # name_is_free <name>: fail if a Sprite with that name exists, so cleanup never touches it.
 name_is_free() {
   # sprite_url's die only ends its $(...) subshell, so stop here when the lookup fails.
@@ -608,7 +622,7 @@ name_is_free() {
 # new_sprite <name>: create a Sprite.
 new_sprite() {
   local name="$1"
-  step 1 "Creating Sprite $name in $org"
+  step_start 1 "Creating Sprite $name in $org"
   local out rc=0
   out="$(sp create --skip-console --label orca-recipe "$name" 2>&1)" || rc=$?
   # Restricted tokens cannot set labels; the label only tags the Sprite, so create it without.
@@ -636,17 +650,19 @@ build_sprite() {
     bash -lc "$remote_build" >&2
 }
 
+#@end
 remote_env() {
   local url="$1"
   printf 'ORCA_PORT=%s,ORCA_PROJECT_ROOT=%s,ORCA_REPO_REF=%s,ORCA_PAIRING_ADDRESS=%s,SERVICE=%s,RECIPE_FILE=%s,KEEP_AWAKE=%s' \
     "$port" "$project_root" "$repo_ref" "${url/https:\/\//wss://}" "$service_name" "$recipe_file" "$keep_awake"
 }
 
+#@create-only
 # serve_sprite <name>: start orca serve on a built Sprite and print its recipe JSON.
 serve_sprite() {
   local name="$1" url
   url="$(sprite_url "$name")"; [ -n "$url" ] || die "no URL for Sprite $name"
-  step 4 "Starting Orca on the Sprite"
+  step_start 4 "Starting Orca on the Sprite"
   rexec "$name" --env "$(remote_env "$url")" -- bash -lc "$remote_serve"
   # The project folder as Orca names it: the checkout folder, without a trailing / or .git.
   local folder="${project_root%/}"; folder="${folder##*/}"; folder="${folder%.git}"
@@ -656,6 +672,7 @@ serve_sprite() {
   log "Next: sign Claude in on this Sprite. Settings > Host: this workspace's VM > Accounts > Claude > Add Account"
 }
 
+#@end
 # emit_result <recipe-json> <name>: merge userData and print.
 emit_result() {
   node -e '
