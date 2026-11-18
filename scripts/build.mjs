@@ -138,11 +138,14 @@ function script(name) {
 
 /** The command Orca runs, around a base64 gzip of the script: unpack, then run it with bash
  *  as sprites-<name>. base64 --decode and gunzip are on macOS and Linux alike, so this needs
- *  nothing on PATH beyond the system folders. $(...) drops the script's final newline. */
+ *  nothing on PATH beyond the system folders. $(...) drops the script's final newline.
+ *  It starts with `bash`, a single-quoted argument with no ' in it, because Orca labels a
+ *  recipe with the first word of its create command ("bash · destroy configured"). base64
+ *  needs no quotes: its characters mean nothing to the shell. */
 const wrap = (name, b64) =>
-  `s="$(printf %s '${b64}' | base64 --decode | gunzip -c)" && [ -n "$s" ] ` +
-  `|| { echo '[sprites] error: could not unpack the recipe script' >&2; exit 1; }; ` +
-  `exec bash -c "$s" sprites-${name}`
+  `bash -c 's="$(printf %s ${b64} | base64 --decode | gunzip -c)" && [ -n "$s" ] ` +
+  `|| { echo "[sprites] error: could not unpack the recipe script" >&2; exit 1; }; ` +
+  `exec bash -c "$s" "$0"' sprites-${name}`
 
 function phase(name) {
   const gz = gzipSync(script(name), { level: 9 })
@@ -155,7 +158,7 @@ function phase(name) {
 /** Whether a built command is the wrapper around exactly this script, however it was compressed. */
 function matches(name, command, text) {
   if (typeof command !== 'string' || Buffer.byteLength(command) > MAX) return false
-  const m = /printf %s '([A-Za-z0-9+/=]+)'/.exec(command)
+  const m = /printf %s ([A-Za-z0-9+/=]+) \|/.exec(command)
   if (!m || command.replace(m[1], '') !== wrap(name, '')) return false
   const gz = Buffer.from(m[1], 'base64')
   // Node stops decoding at the first '=' but GNU base64 goes on, and gunzip would then unpack
